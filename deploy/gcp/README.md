@@ -25,6 +25,12 @@ sobreviver à transferência para a organização definitiva.
 
 ## O que foi feito à mão, e por quê
 
+**Executado em 2026-11-06** pelo dono, no Cloud Shell, seções 1 a 4: projeto
+criado e movido para a organização, faturamento vinculado, orçamento de R$ 25
+(alertas em 50%, 90%, 100% e previsão de 100%), bucket criado e versionado,
+primeira aplicação com 22 recursos, acesso ao state e variáveis do GitHub.
+Número do projeto: `249031560608`.
+
 Executado uma vez, pelo dono, no Cloud Shell. Nada disso é código porque o
 Terraform não consegue criar o lugar onde guarda o próprio state, nem conceder a
 si mesmo o acesso que precisa para começar.

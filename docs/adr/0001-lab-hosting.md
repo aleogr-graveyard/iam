@@ -18,8 +18,9 @@ pode ser reutilizado.
 
 ## Decisão
 
-1. **Projeto próprio** `aleogr-lab-iam-c4vc`, criado à mão pelo dono com
-   faturamento, alerta de orçamento e bucket de state versionado.
+1. **Projeto próprio** `aleogr-lab-iam-c4vc`, na mesma organização do
+   `aleogr-lab-shared-dacd`, criado à mão pelo dono com faturamento, alerta de
+   orçamento e bucket de state versionado.
 2. **Terraform do iam aplicado pelo CI**, via Workload Identity Federation
    restrita ao id do repositório. Duas identidades: `iam-planner` (leitura, em
    PRs) e `iam-deployer` (escrita, só da `main`). A primeira aplicação é do dono.
