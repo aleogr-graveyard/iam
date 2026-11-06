@@ -3,9 +3,13 @@ name: Sensitive paths
 # pull_request, never pull_request_target: PR code must not run with a privileged
 # token. Fork PRs get a read-only token, so the guard only acts on same-repo PRs.
 #
-# The guard (matcher source and patterns file) is taken from the BASE ref, never
-# from the PR, so a PR cannot neuter it. Consequence: the very first PR that
-# introduces the guard fails closed, because the base has no tool yet.
+# With pull_request this workflow file itself is read from the PR, so a PR can
+# edit or remove the guard; only the ruleset (required checks, owner merges for
+# sensitive paths) protects it, and this file is itself a sensitive path. What
+# the BASE ref does supply is the matcher source, the patterns file and the Go
+# toolchain version, so a PR that leaves this file alone cannot change how its
+# paths are judged. Consequence: the very first PR that introduces the guard
+# fails closed, because the base has no tool yet.
 #
 # Fails closed: any error disables auto-merge (if enabled), is written to the
 # step summary, and fails the job. The job is not a required check.
@@ -37,13 +41,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: base/go.mod
           cache-dependency-path: "**/go.sum"
       - name: Check changed paths
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTO_MERGE: ${{ github.event.pull_request.auto_merge != null }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
           set -euo pipefail
 
@@ -71,10 +76,28 @@ jobs:
             fail "The base ref has no guard tool or patterns file."
           fi
 
-          # Renames list both the new and the previous path: both are checked.
-          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)')" \
+          # One JSON object per changed file, so the count can be checked.
+          entries="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename} | @json')" \
             || fail "Could not list the files of the pull request."
+
+          # The files API returns at most 3000 files. Fail closed unless every
+          # changed file was listed: the distinct names must match the count in
+          # the event (a push after the event also mismatches; its own run decides).
+          case "$CHANGED_FILES" in
+            '' | *[!0-9]*) fail "The event has no valid changed_files count." ;;
+          esac
+          names="$(jq -r '.filename' <<<"$entries")" \
+            || fail "Could not read the list of files."
+          listed="$(printf '%s\n' "$names" | sort -u | awk 'length > 0 { n++ } END { print n + 0 }')" \
+            || fail "Could not count the listed files."
+          if [ "$listed" -ne "$CHANGED_FILES" ] || [ "$listed" -ge 3000 ]; then
+            fail "The files API listed $listed files but the pull request changes $CHANGED_FILES (the API stops at 3000)."
+          fi
+
+          # Renames list both the new and the previous path: both are checked.
+          files="$(jq -r '.filename, (.previous_filename // empty)' <<<"$entries")" \
+            || fail "Could not read the list of files."
 
           matches="$(printf '%s\n' "$files" \
             | (cd base/tools && GOWORK=off go run ./sensitivepaths ../.github/sensitive-paths.txt))" \

@@ -2,7 +2,8 @@ name: Nightly
 
 on:
   schedule:
-    - cron: "17 6 * * *"
+    # 11:17 UTC is 08:17 in São Paulo: nothing scheduled runs 22:00-08:00 (CLAUDE.md).
+    - cron: "17 11 * * *"
   workflow_dispatch:
 
 permissions: {}
