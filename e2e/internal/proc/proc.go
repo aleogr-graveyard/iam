@@ -85,10 +85,27 @@ func (p *Process) Stop() {
 // WaitHTTP polls url until it answers with status want or the timeout expires.
 func WaitHTTP(t *testing.T, url string, want int, timeout time.Duration) {
 	t.Helper()
+	waitHTTP(t, url, want, timeout, nil, nil)
+}
+
+// WaitHTTP is like the package function but fails at once, with the process
+// output, if the process exits before url answers with status want.
+func (p *Process) WaitHTTP(t *testing.T, url string, want int, timeout time.Duration) {
+	t.Helper()
+	waitHTTP(t, url, want, timeout, p.done, p.out)
+}
+
+func waitHTTP(t *testing.T, url string, want int, timeout time.Duration, exited <-chan struct{}, out *syncBuffer) {
+	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
 	last := "no response"
 	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			t.Fatalf("proc: process exited before %s answered %d; output:\n%s", url, want, out.String())
+		default:
+		}
 		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()

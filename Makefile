@@ -16,9 +16,10 @@ OSV_SCANNER   := $(call gotool,osv-scanner)
 .PHONY: dev dev-down dev-reset test e2e build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check
 
 # Every module listed in go.work is self-contained, so each is tested from its own
-# directory. The e2e module skips itself here unless IAM_E2E_DATABASE_URL is set.
+# directory. The e2e module is excluded on purpose: it needs built binaries and its
+# own database variable, and runs through `make e2e` (CI job E2E).
 test:
-	@for d in $$(go list -m -f '{{.Dir}}'); do \
+	@for d in $$(go list -m -f '{{.Dir}}' | grep -v '^$(CURDIR)/e2e$$'); do \
 		(cd $$d && go test -race ./...) || exit 1; \
 	done
 

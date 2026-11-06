@@ -38,7 +38,7 @@ func repoRoot(t *testing.T) string {
 
 func build(t *testing.T, root, out, pkg string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-o", out, pkg) //nolint:gosec // test-controlled arguments
+	cmd := exec.Command("go", "build", "-o", out, pkg) //nolint:gosec // arguments are fixed by the test
 	cmd.Dir = root
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build %s: %v\n%s", pkg, err, b)
@@ -66,16 +66,16 @@ func TestE2E_ClientAReachesIAM(t *testing.T) {
 		"IAM_HTTP_ADDR=" + iamAddr,
 		"IAM_DATABASE_URL=" + dbURL,
 	})
-	proc.WaitHTTP(t, "http://"+iamAddr+"/readyz", http.StatusOK, waitFor)
+	iam.WaitHTTP(t, "http://"+iamAddr+"/readyz", http.StatusOK, waitFor)
 
 	aAddr := proc.FreeAddr(t)
-	proc.Start(t, aBin, []string{
+	a := proc.Start(t, aBin, []string{
 		"A_HTTP_ADDR=" + aAddr,
 		"A_IAM_URL=http://" + iamAddr,
 	})
 	aHealth := "http://" + aAddr + "/healthz"
-	proc.WaitHTTP(t, aHealth, http.StatusOK, waitFor)
+	a.WaitHTTP(t, aHealth, http.StatusOK, waitFor)
 
 	iam.Stop()
-	proc.WaitHTTP(t, aHealth, http.StatusServiceUnavailable, waitFor)
+	a.WaitHTTP(t, aHealth, http.StatusServiceUnavailable, waitFor)
 }
