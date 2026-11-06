@@ -1,0 +1,122 @@
+name: Sensitive paths
+
+# pull_request, never pull_request_target: PR code must not run with a privileged
+# token. Fork PRs get a read-only token, so the guard only acts on same-repo PRs.
+#
+# With pull_request this workflow file itself is read from the PR, so a PR can
+# edit or remove the guard; only the ruleset (required checks, owner merges for
+# sensitive paths) protects it, and this file is itself a sensitive path. What
+# the BASE ref does supply is the matcher source, the patterns file and the Go
+# toolchain version, so a PR that leaves this file alone cannot change how its
+# paths are judged. Consequence: the very first PR that introduces the guard
+# fails closed, because the base has no tool yet.
+#
+# Fails closed: any error disables auto-merge (if enabled), is written to the
+# step summary, and fails the job. The job is not a required check.
+#
+# Known race: an already-green PR can merge before this job runs. Only the
+# required checks in the ruleset (owner step) close that window.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, auto_merge_enabled]
+
+permissions: {}
+
+jobs:
+  guard:
+    name: Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: base/go.mod
+          cache-dependency-path: "**/go.sum"
+      # Runs even when an earlier step failed (e.g. setup-go cannot read
+      # base/go.mod because the base ref predates the guard): the script then
+      # fails closed and disables auto-merge instead of being skipped.
+      - name: Check changed paths
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTO_MERGE: ${{ github.event.pull_request.auto_merge != null }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+
+          disable_auto() {
+            [ "$AUTO_MERGE" = "true" ] || return 0
+            if gh pr merge --disable-auto "$PR_NUMBER"; then
+              echo "Auto-merge disabled." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "FAILED to disable auto-merge." >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+          }
+
+          fail() {
+            {
+              echo "### Sensitive-paths guard error (failing closed)"
+              echo
+              echo "$1"
+            } >> "$GITHUB_STEP_SUMMARY"
+            disable_auto || true
+            exit 1
+          }
+
+          if [ ! -f base/tools/sensitivepaths/main.go ] || [ ! -f base/.github/sensitive-paths.txt ]; then
+            fail "The base ref has no guard tool or patterns file."
+          fi
+
+          # One JSON object per changed file, so the count can be checked.
+          entries="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename} | @json')" \
+            || fail "Could not list the files of the pull request."
+
+          # The files API returns at most 3000 files. Fail closed unless every
+          # changed file was listed: the distinct names must match the count in
+          # the event (a push after the event also mismatches; its own run decides).
+          case "$CHANGED_FILES" in
+            '' | *[!0-9]*) fail "The event has no valid changed_files count." ;;
+          esac
+          names="$(jq -r '.filename' <<<"$entries")" \
+            || fail "Could not read the list of files."
+          listed="$(printf '%s\n' "$names" | sort -u | awk 'length > 0 { n++ } END { print n + 0 }')" \
+            || fail "Could not count the listed files."
+          if [ "$listed" -ne "$CHANGED_FILES" ] || [ "$listed" -ge 3000 ]; then
+            fail "The files API listed $listed files but the pull request changes $CHANGED_FILES (the API stops at 3000)."
+          fi
+
+          # Renames list both the new and the previous path: both are checked.
+          files="$(jq -r '.filename, (.previous_filename // empty)' <<<"$entries")" \
+            || fail "Could not read the list of files."
+
+          matches="$(printf '%s\n' "$files" \
+            | (cd base/tools && GOWORK=off go run ./sensitivepaths ../.github/sensitive-paths.txt))" \
+            || fail "The path matcher failed."
+
+          if [ -z "$matches" ]; then
+            echo "No sensitive paths changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Sensitive paths changed (owner merges)"
+            echo
+            echo '~~~~~~'
+            echo "$matches"
+            echo '~~~~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          disable_auto || exit 1

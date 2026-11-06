@@ -1,0 +1,23 @@
+goos: linux
+goarch: amd64
+pkg: x/a
+,onesided.base.txt,,onesided.head.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+A-4,1.0055e-06,0%,1.0055e-06,0%,~,p=1.000 n=10
+B-4,1.0055e-06,0%
+C-4,,,1.0055e-06,0%
+geomean,1.0055e-06,,1.0055e-06,,+0.00%,
+
+,onesided.base.txt,,onesided.head.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+A-4,64,0%,64,0%,~,p=1.000 n=10
+B-4,64,0%
+C-4,,,64,0%
+geomean,63.99999999999998,,63.99999999999998,,+0.00%,
+
+,onesided.base.txt,,onesided.head.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+A-4,2,0%,2,0%,~,p=1.000 n=10
+B-4,2,0%
+C-4,,,2,0%
+geomean,2,,2,,+0.00%,

@@ -1,0 +1,17 @@
+goos: linux
+goarch: amd64
+pkg: example.com/x
+,improvement.base.txt,,improvement.head.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+A-4,9.9945e-07,1%,8.022000000000001e-07,1%,-19.74%,p=0.000 n=10
+geomean,9.994499999999992e-07,,8.021999999999994e-07,,-19.74%,
+
+,improvement.base.txt,,improvement.head.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+A-4,64,0%,64,0%,~,p=1.000 n=10
+geomean,63.99999999999998,,63.99999999999998,,+0.00%,
+
+,improvement.base.txt,,improvement.head.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+A-4,2,0%,2,0%,~,p=1.000 n=10
+geomean,2,,2,,+0.00%,

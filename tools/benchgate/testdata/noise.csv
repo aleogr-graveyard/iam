@@ -1,0 +1,20 @@
+goos: linux
+goarch: amd64
+pkg: example.com/x
+,noise.base.txt,,noise.head.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+A-4,9.7945e-07,49%,1.2135e-06,39%,~,p=0.190 n=10
+B-4,9.995000000000001e-07,0%,1.03015e-06,0%,+3.07%,p=0.000 n=10
+geomean,9.894242138739079e-07,,1.1180729068356868e-06,,+13.00%,
+
+,noise.base.txt,,noise.head.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+A-4,64,0%,64,0%,~,p=1.000 n=10
+B-4,64,0%,64,0%,~,p=1.000 n=10
+geomean,63.99999999999998,,63.99999999999998,,+0.00%,
+
+,noise.base.txt,,noise.head.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+A-4,2,0%,2,0%,~,p=1.000 n=10
+B-4,2,0%,2,0%,~,p=1.000 n=10
+geomean,2,,2,,+0.00%,
