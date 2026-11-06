@@ -127,6 +127,21 @@ graph LR
   AUTHZ-015 --> TEST-010
 ```
 
+### Pendências herdadas do marco 0
+
+Levantadas nas revisões do marco 0; entram nos itens indicados.
+
+| Pendência | Onde entra |
+|---|---|
+| `/readyz` sem cache pode ocupar as 2 conexões do pool; ping no boot é fatal com a instância dormindo | OPS-101 |
+| `depguard`: negar `net/rpc`, `net/smtp`, `net/url` e afins nos núcleos; liberar imports só de teste (`cedar-go`) na allow-list estrita | AUTHZ-012, primeiro código de núcleo |
+| Pânico dentro de uma checagem de prontidão derruba o processo | OPS-101 |
+| Teste de que URL inválida não vaza credencial | SHARED-012 |
+| Reprodutibilidade provada no build do `ko` (com ldflags), não só no `go build` | antes do primeiro release |
+| Advisories nas ferramentas de `tools/*` sem relatório (só o módulo distribuído é barrado) | OPS-011, relatório noturno não bloqueante |
+| Dono rodar `make dev` uma vez (Docker não existia no ambiente de desenvolvimento) | antes de fechar o marco 0 |
+| Dono decidir: ampliar `.github/sensitive-paths.txt` (`.ko.yaml`, `go.work`, `buf.*`, `api/**`, `go.mod`/`go.sum`) e mover o guarda para `pull_request_target` | OPS-010 |
+
 ## Camadas seguintes (ordem proposta, detalhadas quando o marco anterior fechar)
 
 | Marco | Objetivo | Principais itens |
