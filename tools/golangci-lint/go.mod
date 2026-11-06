@@ -1,4 +1,4 @@
-module github.com/aleogr/iam/tools
+module github.com/aleogr/iam/tools/golangci-lint
 
 go 1.27
 

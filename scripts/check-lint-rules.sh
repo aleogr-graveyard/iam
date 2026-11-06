@@ -21,7 +21,7 @@ absent=(
 )
 
 cd "$root/tools/lintfixture" || exit 1
-out="$(GOWORK=off go tool -modfile="$root/tools/go.mod" golangci-lint run --config "$root/.golangci.yml" ./... 2>&1)"
+out="$(GOWORK=off go tool -modfile="$root/tools/golangci-lint/go.mod" golangci-lint run --config "$root/.golangci.yml" ./... 2>&1)"
 status=$?
 
 if [ "$status" -eq 0 ]; then
