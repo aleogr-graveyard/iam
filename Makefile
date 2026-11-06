@@ -8,6 +8,7 @@ GITLEAKS      := $(call gotool,gitleaks)
 ACTIONLINT    := $(call gotool,actionlint)
 GO_LICENSES   := $(call gotool,go-licenses)
 BUF           := $(call gotool,buf)
+CRANE         := $(call gotool,crane)
 
 .PHONY: test build lint lint-rules vuln secrets licenses actions proto proto-check check
 

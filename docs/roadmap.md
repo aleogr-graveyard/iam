@@ -22,7 +22,7 @@ contra ele; os arquivos de comunidade e de CRA existem.
 | OPS-002 | `golangci-lint` com regras de fronteira (`depguard`, `forbidigo`) e um teste que prova que uma violação falha | ✅ | OPS-001 |
 | OPS-003 | CI geral: formatação, lint, `go vet`, testes com `-race`, `govulncheck`, `gosec`, `gitleaks`, licenças, `actionlint` | ✅ | OPS-002 |
 | OPS-004 | `buf`: lint, breaking, geração verificada, Protobuf mínimo | ✅ | OPS-001 |
-| OPS-005 | Postgres real no CI e harness de testes de integração | ⏳ | OPS-001 |
+| OPS-005 | Postgres real no CI e harness de testes de integração | ✅ | OPS-001 |
 | OPS-006 | Ambiente local com um comando (Postgres + servidor) | ⏳ | OPS-001 |
 | OPS-007 | Imagem com `ko`, base fixada por digest, varredura e SBOM (CycloneDX) | ⏳ | OPS-003 |
 | OPS-008 | `LICENSE` (Apache-2.0), `SECURITY.md`, `CONTRIBUTING.md`, política de suporte | ⏳ | — |

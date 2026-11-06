@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/aleogr/iam/internal/database"
 	"github.com/aleogr/iam/internal/httpserver"
 )
 
@@ -31,5 +32,15 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	log.Info("iam starting", "version", version, "addr", cfg.HTTPAddr)
-	return httpserver.New(cfg.HTTPAddr).Run(ctx, cfg.ShutdownTimeout)
+
+	var opts []httpserver.Option
+	if cfg.DatabaseURL != "" {
+		pool, err := database.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		opts = append(opts, httpserver.WithReadinessChecks(database.ReadinessCheck(pool)))
+	}
+	return httpserver.New(cfg.HTTPAddr, opts...).Run(ctx, cfg.ShutdownTimeout)
 }
