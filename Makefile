@@ -13,10 +13,18 @@ KO            := $(call gotool,ko)
 CYCLONEDX     := $(call gotool,cyclonedx-gomod)
 OSV_SCANNER   := $(call gotool,osv-scanner)
 
-.PHONY: dev dev-down dev-reset test build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check
+.PHONY: dev dev-down dev-reset test e2e build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check
 
+# Every module listed in go.work is self-contained, so each is tested from its own
+# directory. The e2e module skips itself here unless IAM_E2E_DATABASE_URL is set.
 test:
-	go test -race ./...
+	@for d in $$(go list -m -f '{{.Dir}}'); do \
+		(cd $$d && go test -race ./...) || exit 1; \
+	done
+
+# Builds the server and test client A and runs them against a real database.
+e2e:
+	cd e2e && go test -race -count=1 -v ./...
 
 build:
 	go build -trimpath -o dist/iam ./cmd/iam
@@ -24,7 +32,7 @@ build:
 # Lints every module in go.work (tools/lintfixture is deliberately outside it).
 lint:
 	@for d in $$(go list -m -f '{{.Dir}}'); do \
-		$(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml $$d/... || exit 1; \
+		(cd $$d && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...) || exit 1; \
 	done
 
 lint-rules:

@@ -61,6 +61,38 @@ jobs:
           cache-dependency-path: "**/go.sum"
       - run: make test
 
+  E2E:
+    name: E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Ephemeral password for a throwaway service container; not a secret.
+      IAM_E2E_DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:5432/postgres?sslmode=disable
+      IAM_REQUIRE_DB: "1"
+    services:
+      postgres:
+        image: postgres:16@sha256:933463a6c8eba2b9f5cd414138738cd8d5519cd2c471214c222652f547a66a32
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - run: make e2e
+
   Security:
     name: Security
     runs-on: ubuntu-latest
