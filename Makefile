@@ -9,8 +9,11 @@ ACTIONLINT    := $(call gotool,actionlint)
 GO_LICENSES   := $(call gotool,go-licenses)
 BUF           := $(call gotool,buf)
 CRANE         := $(call gotool,crane)
+KO            := $(call gotool,ko)
+CYCLONEDX     := $(call gotool,cyclonedx-gomod)
+OSV_SCANNER   := $(call gotool,osv-scanner)
 
-.PHONY: dev dev-down dev-reset test build lint lint-rules vuln secrets licenses actions proto proto-check check
+.PHONY: dev dev-down dev-reset test build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check
 
 test:
 	go test -race ./...
@@ -48,6 +51,27 @@ proto:
 # Lint, breaking-change check against origin/main, and generation freshness.
 proto-check:
 	GOWORK=off BUF='go tool -modfile=$(CURDIR)/tools/buf/go.mod buf' ./scripts/check-proto.sh
+
+# Image targets are slow and need the network, so they are not part of `check`;
+# CI runs them in the Image job.
+# The tarball holds one platform (an OCI tarball cannot carry an index) and ko.local
+# would load into a Docker daemon, so a dummy repository name is used instead.
+image:
+	mkdir -p dist
+	KO_DOCKER_REPO=iam.invalid/iam $(KO) build ./cmd/iam --push=false --platform=linux/amd64 --tarball=dist/iam.tar --sbom=none
+
+sbom:
+	mkdir -p dist
+	$(CYCLONEDX) app -json -licenses -main cmd/iam -output dist/iam.cdx.json
+
+# Only the shipped module is scanned: tools/*/go.mod are build-time tools, not part
+# of the image, and their advisories would fail the build for code we never ship.
+scan:
+	$(OSV_SCANNER) scan image --archive dist/iam.tar
+	$(OSV_SCANNER) scan source -L go.mod
+
+repro:
+	./scripts/check-reproducible.sh
 
 check: lint lint-rules test vuln secrets licenses actions proto-check
 
