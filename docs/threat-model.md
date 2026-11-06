@@ -173,9 +173,9 @@ Fronteiras: (1) internet → serviço; (2) tenant → tenant dentro do serviço;
 
 | ID | Ameaça | STRIDE | Mitigação no design | Teste de abuso | Marco |
 |---|---|---|---|---|---|
-| TM-MN-001 | Autoaprovação | E | Quórum por papéis (ADR 0021). **Pendente**: regra de elegibilidade (solicitante excluído, separação de funções, conflito de interesse, como exige o perfil AuthZEN) | Solicitante não conta no quórum | posterior |
-| TM-MN-002 | Mesma pessoa aprovando duas vezes (duas credenciais ou duas contas) | E | **Pendente**: quórum contado por pessoa, não por credencial | Duas assinaturas da mesma pessoa contam uma | posterior |
-| TM-MN-003 | Aprovação reaproveitada para outra ação | E | Assinatura WebAuthn sobre a ação canônica RFC 8785 (ADR 0021). **Pendente**: expiração e uso único da aprovação | Assinatura sobre ação A não autoriza B nem uma segunda execução de A | posterior |
+| TM-MN-001 | Autoaprovação | E | Quórum por papéis; solicitante não aprova; separação de funções e conflito de interesse verificados por política, como exige o perfil AuthZEN (ADR 0021) | Solicitante não conta no quórum | posterior |
+| TM-MN-002 | Mesma pessoa aprovando duas vezes (duas credenciais ou duas contas) | E | Quórum contado por pessoa distinta, não por chave (ADR 0021) | Duas assinaturas da mesma pessoa contam uma | posterior |
+| TM-MN-003 | Aprovação reaproveitada para outra ação | E | Assinatura WebAuthn sobre o hash da ação canônica RFC 8785 com nonce; janela de tempo e expiração; aprovação não vale para outra ação nem para a mesma ação alterada (ADR 0021) | Assinatura sobre ação A não autoriza B nem uma segunda execução de A | posterior |
 | TM-MN-004 | Ação trocada depois da aprovação | T | Execução por reavaliação ou pacote de evidências verificável pelo executor (ADR 0021) | Alterar qualquer campo da ação invalida o pacote | posterior |
 | TM-MN-005 | Aprovador vê uma ação e assina outra (WebAuthn não prova o que foi exibido) | S, T | UI própria exibe a forma canônica; sem promessa de "what you see is what you sign" (differentials-check). Risco aceito (seção 5) | UI renderiza exatamente o hash assinado (teste de UI) | posterior |
 
