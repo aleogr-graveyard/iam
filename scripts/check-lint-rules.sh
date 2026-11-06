@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
-# Proves the architectural lint rules bite: the fixture module must fail lint
-# and the output must show every rule marker.
+# Proves the architectural lint rules bite where they must and stay quiet where
+# they must not: the fixture module must fail lint, every expected finding must
+# be anchored to its fixture file, and the exempt files must have no finding.
+# No `set -e`: the lint run is expected to exit non-zero and is handled explicitly.
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-markers=(core-no-infra crypto-only-in-shared-crypto no-math-rand "inject a clock")
+
+# Finding lines look like "<file>:<line>:<col>: ... (linter)". Depguard quotes
+# the exact rule name ('name'), so a renamed rule such as core-no-infra-x fails.
+expected=(
+	"authn/core/violations\.go:[0-9]+:[0-9]+: .*from list 'core-no-infra'"
+	"authn/core/violations\.go:[0-9]+:[0-9]+: .*inject a clock"
+	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'crypto-only-in-shared-crypto'"
+	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'no-math-rand'"
+)
+absent=(
+	"internal/anywhere/clock_ok\.go:[0-9]+:[0-9]+: .*inject a clock"
+	"shared/crypto/sha\.go:[0-9]+:[0-9]+: .*crypto-only-in-shared-crypto"
+)
 
 cd "$root/tools/lintfixture" || exit 1
 out="$(GOWORK=off go tool -modfile="$root/tools/go.mod" golangci-lint run --config "$root/.golangci.yml" ./... 2>&1)"
@@ -15,15 +29,21 @@ if [ "$status" -eq 0 ]; then
 	exit 1
 fi
 
-missing=0
-for m in "${markers[@]}"; do
-	if ! grep -qF -- "$m" <<<"$out"; then
-		echo "FAIL: marker not found in lint output: $m" >&2
-		missing=1
+bad=0
+for re in "${expected[@]}"; do
+	if ! grep -qE -- "$re" <<<"$out"; then
+		echo "FAIL: expected finding not found: $re" >&2
+		bad=1
 	fi
 done
-if [ "$missing" -ne 0 ]; then
+for re in "${absent[@]}"; do
+	if grep -qE -- "$re" <<<"$out"; then
+		echo "FAIL: unexpected finding present: $re" >&2
+		bad=1
+	fi
+done
+if [ "$bad" -ne 0 ]; then
 	echo "$out" >&2
 	exit 1
 fi
-echo "all ${#markers[@]} boundary rules fired"
+echo "all ${#expected[@]} boundary rules fired; ${#absent[@]} exemptions held"
