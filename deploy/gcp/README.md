@@ -106,6 +106,26 @@ gcloud storage buckets add-iam-policy-binding "gs://$PROJECT-tfstate" \
 | `GCP_PLANNER_SA` | `terraform output -raw planner_email` |
 | `GCP_DEPLOYER_SA` | `terraform output -raw deployer_email` |
 
+### 5. Banco no `lab-postgres`
+
+Só com a instância acordada (fora de seg–qui, 22:00–07:30). Antes do merge do PR
+que declara o banco, o dono habilita `sqladmin` e `secretmanager` e concede
+`roles/secretmanager.admin` ao `iam-deployer` (a declaração em
+`ci_identities.tf` mantém isso depois; conceder e usar no mesmo apply corre
+contra a propagação do IAM). Depois do apply:
+
+1. Gerar a senha direto no Secret Manager, sem passar pela tela:
+   `openssl rand -base64 32 | tr -d '\n' | gcloud secrets versions add iam-migrator-password --project=$PROJECT --data-file=-`
+2. Definir a senha do `iam_migrator` a partir do secret
+   (`gcloud sql users set-password`).
+3. Abrir o Cloud SQL Auth Proxy em `127.0.0.1` e rodar `../sql/bootstrap.sql`
+   como `iam_migrator` no banco `iam`.
+4. Conferir: `CONNECT` só para `iam_migrator` e `iam_app`, `datconnlimit = 6`,
+   `iam-run` membro de `iam_app`.
+
+Nunca usar `gcloud sql connect`: ele acrescenta uma rede autorizada à instância,
+que pertence ao aleogr/lab.
+
 ## Ao acrescentar um recurso
 
 Todo tipo de recurso novo precisa de concessão para as duas identidades de CI

@@ -23,3 +23,13 @@ variable "github_repository_id" {
     error_message = "github_repository_id must be the numeric repository id."
   }
 }
+
+variable "shared_sql_project" {
+  description = "The project that owns the shared Cloud SQL instance. Owned by aleogr/lab; this configuration only declares its own database and users inside it."
+  type        = string
+}
+
+variable "shared_sql_instance" {
+  description = "The shared Cloud SQL instance's name."
+  type        = string
+}

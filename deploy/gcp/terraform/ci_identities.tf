@@ -50,6 +50,9 @@ resource "google_project_iam_member" "planner" {
   member  = "serviceAccount:${google_service_account.planner.email}"
 }
 
+# On the shared instance the deployer holds aleogr/lab's `sqlTenant` and the
+# planner `cloudsql.viewer`; both are granted there, by aleogr/lab, not here.
+#
 # `projectIamAdmin` can grant any role in this project, including to itself,
 # so the deployer is effectively this project's owner. That is why it is
 # reachable only from main, which only the owner merges into.
@@ -58,6 +61,7 @@ resource "google_project_iam_member" "deployer" {
     "roles/iam.serviceAccountAdmin",
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/resourcemanager.projectIamAdmin",
+    "roles/secretmanager.admin",
     "roles/serviceusage.serviceUsageAdmin",
   ])
 
