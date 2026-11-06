@@ -9,8 +9,16 @@ buf="${BUF:-buf}"
 
 $buf lint
 
-# The first PR that adds api/ has nothing to compare against.
-if [ -n "$(git ls-tree -d origin/main api 2>/dev/null)" ]; then
+# origin/main must resolve: an unresolvable base (shallow or partial checkout,
+# missing remote) must fail, never be mistaken for "no api/ yet".
+if ! base=$(git rev-parse --verify -q 'origin/main^{commit}'); then
+	echo "cannot resolve origin/main; fetch it (CI checks out with fetch-depth: 0)" >&2
+	exit 1
+fi
+# Only the first PR that adds api/ has nothing to compare against. A plain
+# assignment so that a git error fails the script (set -e).
+base_api=$(git ls-tree -d "$base" -- api)
+if [ -n "$base_api" ]; then
 	$buf breaking --against '.git#ref=refs/remotes/origin/main,subdir=api'
 else
 	echo "skipping buf breaking: origin/main has no api/ yet"

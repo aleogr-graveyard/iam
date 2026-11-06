@@ -14,13 +14,17 @@ CYCLONEDX     := $(call gotool,cyclonedx-gomod)
 OSV_SCANNER   := $(call gotool,osv-scanner)
 BENCHSTAT     := $(call gotool,benchstat)
 
-.PHONY: dev dev-down dev-reset test e2e build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench
+.PHONY: dev dev-down dev-reset test e2e build lint lint-rules workspace-check vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench
 
 # Every module listed in go.work is self-contained, so each is tested from its own
 # directory. The e2e module is excluded on purpose: it needs built binaries and its
 # own database variable, and runs through `make e2e` (CI job E2E).
+# The module list is captured first: a broken go.work fails instead of looping zero
+# times. `make workspace-check` proves no module is missing from go.work.
 test:
-	@for d in $$(go list -m -f '{{.Dir}}' | grep -v '^$(CURDIR)/e2e$$'); do \
+	@mods=$$(go list -m -f '{{.Dir}}') || exit 1; \
+	[ -n "$$mods" ] || { echo "go.work lists no modules" >&2; exit 1; }; \
+	for d in $$(printf '%s\n' "$$mods" | grep -vxF '$(CURDIR)/e2e'); do \
 		(cd $$d && go test -race ./...) || exit 1; \
 	done
 	cd tools && GOWORK=off go test -race ./...
@@ -35,13 +39,19 @@ build:
 # Lints every module in go.work plus the tools module (the repo's own tool code;
 # tools/<tool>/ and tools/lintfixture are nested modules and are not part of it).
 lint:
-	@for d in $$(go list -m -f '{{.Dir}}'); do \
+	@mods=$$(go list -m -f '{{.Dir}}') || exit 1; \
+	[ -n "$$mods" ] || { echo "go.work lists no modules" >&2; exit 1; }; \
+	for d in $$mods; do \
 		(cd $$d && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...) || exit 1; \
 	done
 	cd tools && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...
 
 lint-rules:
 	./scripts/check-lint-rules.sh
+
+# Every go.mod is in go.work or explicitly excluded, so no module escapes lint/test.
+workspace-check:
+	./scripts/check-workspace.sh
 
 vuln:
 	$(GOVULNCHECK) ./...
@@ -95,7 +105,7 @@ BASE ?= origin/main
 bench:
 	BENCHSTAT='$(BENCHSTAT)' ./scripts/bench-compare.sh $(BASE)
 
-check: lint lint-rules test vuln secrets licenses actions proto-check
+check: workspace-check lint lint-rules test vuln secrets licenses actions proto-check
 
 # Local environment: PostgreSQL in Docker Compose plus the server on 127.0.0.1:8080.
 dev:

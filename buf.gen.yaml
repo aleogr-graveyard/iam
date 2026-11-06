@@ -1,4 +1,7 @@
 version: v2
+# Deletes the output directories before generating, so a removed .proto leaves no
+# stale generated file behind (proto-check would not see it otherwise).
+clean: true
 managed:
   enabled: true
   override:

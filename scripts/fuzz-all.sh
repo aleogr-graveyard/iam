@@ -41,8 +41,14 @@ fuzz_dir() {
 	done <<<"$listing"
 }
 
-# Collect the module list first so no command below can consume its stdin.
-mapfile -t dirs < <(go list -m -f '{{.Dir}}')
+# Collect the module list first so no command below can consume its stdin. A
+# plain assignment, not process substitution, so a broken go.work fails (set -e).
+mods=$(go list -m -f '{{.Dir}}' </dev/null)
+if [ -z "$mods" ]; then
+	echo "go.work lists no modules" >&2
+	exit 1
+fi
+mapfile -t dirs <<<"$mods"
 for dir in "${dirs[@]}"; do
 	[ "$dir" = "$root/e2e" ] && continue
 	fuzz_dir "$dir"

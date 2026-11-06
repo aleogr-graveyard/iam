@@ -26,6 +26,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
+      - run: make workspace-check
       - run: make lint
       - run: make lint-rules
       - run: make actions
