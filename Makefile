@@ -7,8 +7,9 @@ GOVULNCHECK   := $(call gotool,govulncheck)
 GITLEAKS      := $(call gotool,gitleaks)
 ACTIONLINT    := $(call gotool,actionlint)
 GO_LICENSES   := $(call gotool,go-licenses)
+BUF           := $(call gotool,buf)
 
-.PHONY: test build lint lint-rules vuln secrets licenses actions check
+.PHONY: test build lint lint-rules vuln secrets licenses actions proto proto-check check
 
 test:
 	go test -race ./...
@@ -39,4 +40,12 @@ licenses:
 actions:
 	$(ACTIONLINT)
 
-check: lint lint-rules test vuln secrets licenses actions
+# Regenerates the committed Go code from api/.
+proto:
+	$(BUF) generate
+
+# Lint, breaking-change check against origin/main, and generation freshness.
+proto-check:
+	GOWORK=off BUF='go tool -modfile=$(CURDIR)/tools/buf/go.mod buf' ./scripts/check-proto.sh
+
+check: lint lint-rules test vuln secrets licenses actions proto-check

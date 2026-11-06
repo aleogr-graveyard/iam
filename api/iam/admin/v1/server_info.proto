@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package iam.admin.v1;
+
+// ServerInfoService exposes basic facts about the running server.
+service ServerInfoService {
+  // GetServerInfo returns the server build information.
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+}
+
+message GetServerInfoRequest {}
+
+message GetServerInfoResponse {
+  // version is the server build version.
+  string version = 1;
+}
