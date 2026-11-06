@@ -19,32 +19,46 @@ linters:
     dupl:
       threshold: 100
     forbidigo:
+      # Types are analyzed so that an aliased import (t "time"; t.Since) still
+      # matches: the pattern is applied to the package path, not the local name.
+      analyze-types: true
       forbid:
-        - pattern: ^time\.Now$
+        - pattern: ^time\.(Now|Since|Until|After|AfterFunc|Tick|NewTimer|NewTicker|Sleep)$
           msg: inject a clock (CLAUDE.md)
     depguard:
       rules:
+        # Strict allow-list: a core may import only the standard library, shared
+        # packages and the cores themselves; anything else (internal/*, drivers,
+        # cloud SDKs, RPC, adapters, servers) is refused without being listed.
+        # The denies below carve infrastructure out of $gostd: depguard picks
+        # the longer of the matching allow and deny entries.
         core-no-infra:
+          list-mode: strict
           files:
             - "**/authn/core/**"
             - "**/authz/core/**"
+          allow:
+            - $gostd
+            - github.com/aleogr/iam/shared
+            - github.com/aleogr/iam/authn/core
+            - github.com/aleogr/iam/authz/core
           deny:
+            - pkg: net
+              desc: cores depend only on ports, never on the network (CLAUDE.md)
             - pkg: net/http
               desc: cores depend only on ports, never on HTTP (CLAUDE.md)
             - pkg: database/sql
               desc: cores depend only on ports, never on SQL (CLAUDE.md)
-            - pkg: github.com/jackc/pgx
-              desc: cores depend only on ports, never on SQL drivers (CLAUDE.md)
-            - pkg: cloud.google.com/go
-              desc: cores depend only on ports, never on cloud SDKs (CLAUDE.md)
-            - pkg: connectrpc.com
-              desc: cores depend only on ports, never on RPC servers (CLAUDE.md)
-            - pkg: github.com/aleogr/iam/adapters
-              desc: cores depend only on ports, never on adapters (CLAUDE.md)
-            - pkg: github.com/aleogr/iam/authn/server
-              desc: cores depend only on ports, never on servers (CLAUDE.md)
-            - pkg: github.com/aleogr/iam/authz/server
-              desc: cores depend only on ports, never on servers (CLAUDE.md)
+        # The internal rule of Go is by import path, so in workspace mode the
+        # example clients and the e2e module could reach github.com/aleogr/iam/internal.
+        # They must use the public API only, like any external client.
+        examples-public-api-only:
+          files:
+            - "**/examples/**"
+            - "**/e2e/**"
+          deny:
+            - pkg: github.com/aleogr/iam/internal
+              desc: examples and e2e use the public API only, never internal packages
         crypto-only-in-shared-crypto:
           files:
             - $all

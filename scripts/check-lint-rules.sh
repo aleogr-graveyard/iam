@@ -9,15 +9,22 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Finding lines look like "<file>:<line>:<col>: ... (linter)". Depguard quotes
 # the exact rule name ('name'), so a renamed rule such as core-no-infra-x fails.
+# The fixture module is named github.com/aleogr/iam so that its imports carry
+# the real paths the rules match (internal/..., shared/...).
 expected=(
-	"authn/core/violations\.go:[0-9]+:[0-9]+: .*from list 'core-no-infra'"
-	"authn/core/violations\.go:[0-9]+:[0-9]+: .*inject a clock"
+	"authn/core/violations\.go:[0-9]+:[0-9]+: .*'net/http' .*from list 'core-no-infra'"
+	"authn/core/infra_import\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'core-no-infra'"
+	"authn/core/violations\.go:[0-9]+:[0-9]+: .*time\.Now.*inject a clock"
+	"authn/core/clock_alias\.go:[0-9]+:[0-9]+: .*t\.Since.*inject a clock"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'crypto-only-in-shared-crypto'"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'no-math-rand'"
+	"examples/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
+	"e2e/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
 )
 absent=(
 	"internal/anywhere/clock_ok\.go:[0-9]+:[0-9]+: .*inject a clock"
 	"shared/crypto/sha\.go:[0-9]+:[0-9]+: .*crypto-only-in-shared-crypto"
+	"authn/core/shared_ok\.go:[0-9]+:[0-9]+: "
 )
 
 cd "$root/tools/lintfixture" || exit 1
