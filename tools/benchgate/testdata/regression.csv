@@ -1,0 +1,17 @@
+goos: linux
+goarch: amd64
+pkg: example.com/x
+,regression.base.txt,,regression.head.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+A-4,9.9945e-07,1%,1.2534500000000003e-06,1%,+25.41%,p=0.000 n=10
+geomean,9.994499999999992e-07,,1.2534499999999996e-06,,+25.41%,
+
+,regression.base.txt,,regression.head.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+A-4,64,0%,64,0%,~,p=1.000 n=10
+geomean,63.99999999999998,,63.99999999999998,,+0.00%,
+
+,regression.base.txt,,regression.head.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+A-4,2,0%,2,0%,~,p=1.000 n=10
+geomean,2,,2,,+0.00%,

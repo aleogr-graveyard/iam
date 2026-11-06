@@ -12,8 +12,9 @@ CRANE         := $(call gotool,crane)
 KO            := $(call gotool,ko)
 CYCLONEDX     := $(call gotool,cyclonedx-gomod)
 OSV_SCANNER   := $(call gotool,osv-scanner)
+BENCHSTAT     := $(call gotool,benchstat)
 
-.PHONY: dev dev-down dev-reset test e2e build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check
+.PHONY: dev dev-down dev-reset test e2e build lint lint-rules vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench
 
 # Every module listed in go.work is self-contained, so each is tested from its own
 # directory. The e2e module is excluded on purpose: it needs built binaries and its
@@ -83,6 +84,16 @@ scan:
 
 repro:
 	./scripts/check-reproducible.sh
+
+# Fuzzes every Fuzz target in the go.work modules; FUZZTIME defaults to 5m.
+fuzz:
+	./scripts/fuzz-all.sh
+
+# Benchmarks BASE (a git ref, default origin/main) against HEAD and fails on a
+# significant regression.
+BASE ?= origin/main
+bench:
+	BENCHSTAT='$(BENCHSTAT)' ./scripts/bench-compare.sh $(BASE)
 
 check: lint lint-rules test vuln secrets licenses actions proto-check
 
