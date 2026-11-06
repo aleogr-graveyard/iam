@@ -44,3 +44,16 @@ func TestRun_GracefulShutdown(t *testing.T) {
 		t.Fatal("Serve did not return")
 	}
 }
+
+func TestNewHTTPServer_Timeouts(t *testing.T) {
+	srv := newHTTPServer(http.NotFoundHandler())
+	if srv.ReadHeaderTimeout != readHeaderTimeout {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", srv.ReadHeaderTimeout, readHeaderTimeout)
+	}
+	if srv.IdleTimeout != idleTimeout {
+		t.Errorf("IdleTimeout = %v, want %v", srv.IdleTimeout, idleTimeout)
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Error("IdleTimeout must be set: idle keep-alive connections would never be closed")
+	}
+}

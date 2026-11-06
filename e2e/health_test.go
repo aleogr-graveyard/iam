@@ -77,5 +77,8 @@ func TestE2E_ClientAReachesIAM(t *testing.T) {
 	a.WaitHTTP(t, aHealth, http.StatusOK, waitFor)
 
 	iam.Stop()
+	if err := iam.ExitErr(); err != nil {
+		t.Errorf("iam did not exit cleanly on SIGTERM: %v", err)
+	}
 	a.WaitHTTP(t, aHealth, http.StatusServiceUnavailable, waitFor)
 }

@@ -22,6 +22,9 @@ type Process struct {
 	out  *syncBuffer
 	done chan struct{}
 	once sync.Once
+	// waitErr is cmd.Wait's result; it is written before done is closed and
+	// read only after, so the channel orders the accesses.
+	waitErr error
 }
 
 type syncBuffer struct {
@@ -55,7 +58,7 @@ func Start(t *testing.T, bin string, env []string) *Process {
 	}
 	p := &Process{t: t, cmd: cmd, out: out, done: make(chan struct{})}
 	go func() {
-		_ = cmd.Wait()
+		p.waitErr = cmd.Wait()
 		close(p.done)
 	}()
 	t.Cleanup(func() {
@@ -80,6 +83,13 @@ func (p *Process) Stop() {
 			p.t.Errorf("proc: %s did not exit after SIGTERM", p.cmd.Path)
 		}
 	})
+}
+
+// ExitErr waits for the process to exit and returns cmd.Wait's result: nil
+// only for a clean exit with status 0.
+func (p *Process) ExitErr() error {
+	<-p.done
+	return p.waitErr
 }
 
 // WaitHTTP polls url until it answers with status want or the timeout expires.

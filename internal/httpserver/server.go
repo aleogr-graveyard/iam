@@ -13,6 +13,9 @@ import (
 const (
 	defaultReadinessTimeout = 2 * time.Second
 	readHeaderTimeout       = 5 * time.Second
+	// idleTimeout closes keep-alive connections left idle, so idle clients
+	// cannot hold connections (and file descriptors) indefinitely.
+	idleTimeout = 60 * time.Second
 )
 
 // ReadinessCheck is a named dependency probe run by /readyz.
@@ -72,10 +75,7 @@ func (s *Server) Run(ctx context.Context, shutdownTimeout time.Duration) error {
 
 // Serve is Run on a caller-provided listener.
 func (s *Server) Serve(ctx context.Context, l net.Listener, shutdownTimeout time.Duration) error {
-	srv := &http.Server{
-		Handler:           s.mux,
-		ReadHeaderTimeout: readHeaderTimeout,
-	}
+	srv := newHTTPServer(s.mux)
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(l) }()
 
@@ -94,4 +94,13 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, shutdownTimeout time
 		return err
 	}
 	return nil
+}
+
+// newHTTPServer returns the http.Server for h with the server's timeouts.
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 }
