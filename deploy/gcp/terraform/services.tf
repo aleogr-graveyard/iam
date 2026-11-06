@@ -3,7 +3,11 @@ resource "google_project_service" "enabled" {
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
+    # Calls to the shared instance are billed to this project
+    # (user_project_override), so its API must be on here too.
+    "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "sts.googleapis.com",
   ])

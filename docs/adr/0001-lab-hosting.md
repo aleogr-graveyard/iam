@@ -27,12 +27,15 @@ pode ser reutilizado.
 3. **Contas de runtime:** `iam-release`, `iam-run`, `iam-migrate`.
 4. **Banco como inquilino do `lab-postgres`:** banco `iam` com
    `deletion_policy = "ABANDON"`; `iam_migrator` (usuário com senha, dono do
-   schema, senha no Secret Manager posta à mão); `iam_app` (role sem login, só
+   schema, criado sem senha pelo Terraform; a senha é gerada no Secret Manager
+   e aplicada à mão, sem passar pelo state); `iam_app` (role sem login, só
    DML, sujeita a RLS); o serviço entra como usuário IAM `iam-run`, membro de
    `iam_app`, sem senha. Migração de bootstrap: `REVOKE CONNECT ... FROM PUBLIC`,
    `GRANT CONNECT` por nome, `CONNECTION LIMIT 6`.
 5. **No aleogr/lab, por PR:** `tenants.iam = { declares = iam-deployer,
-   connects = [iam-run, iam-migrate], logs_in = [iam-run], reads = [iam-release] }`
+   connects = [iam-run, iam-migrate], logs_in = [iam-run],
+   reads = [iam-release, iam-planner] }` (o planner lê o banco e os usuários do
+   iam nos PRs; feito em aleogr/lab#17)
    e a linha na tabela "Who lives here".
 6. **Teto de 6 conexões:** serviço com pool 2 × 1 instância × 2 revisões no
    rollout (4) + job de migração (1) + uma pessoa no psql (1). Tarefas agendadas
