@@ -1,0 +1,92 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - depguard
+    - forbidigo
+    - gosec
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - cyclop
+    - dupl
+    - misspell
+  settings:
+    cyclop:
+      max-complexity: 10
+    dupl:
+      threshold: 100
+    forbidigo:
+      forbid:
+        - pattern: ^time\.Now$
+          msg: inject a clock (CLAUDE.md)
+    depguard:
+      rules:
+        core-no-infra:
+          files:
+            - "**/authn/core/**"
+            - "**/authz/core/**"
+          deny:
+            - pkg: net/http
+              desc: cores depend only on ports, never on HTTP (CLAUDE.md)
+            - pkg: database/sql
+              desc: cores depend only on ports, never on SQL (CLAUDE.md)
+            - pkg: github.com/jackc/pgx
+              desc: cores depend only on ports, never on SQL drivers (CLAUDE.md)
+            - pkg: cloud.google.com/go
+              desc: cores depend only on ports, never on cloud SDKs (CLAUDE.md)
+            - pkg: connectrpc.com
+              desc: cores depend only on ports, never on RPC servers (CLAUDE.md)
+            - pkg: github.com/aleogr/iam/adapters
+              desc: cores depend only on ports, never on adapters (CLAUDE.md)
+            - pkg: github.com/aleogr/iam/authn/server
+              desc: cores depend only on ports, never on servers (CLAUDE.md)
+            - pkg: github.com/aleogr/iam/authz/server
+              desc: cores depend only on ports, never on servers (CLAUDE.md)
+        crypto-only-in-shared-crypto:
+          files:
+            - $all
+            - "!**/shared/crypto/**"
+          deny:
+            - {pkg: crypto/aes, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/cipher, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/des, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/ecdh, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/ecdsa, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/ed25519, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/elliptic, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/hkdf, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/hmac, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/md5, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/mlkem, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/pbkdf2, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/rand, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/rc4, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/rsa, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/sha1, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/sha256, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/sha3, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/sha512, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: crypto/subtle, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: golang.org/x/crypto, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+            - {pkg: github.com/go-jose/go-jose, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+        no-math-rand:
+          files:
+            - $all
+          deny:
+            - {pkg: math/rand, desc: randomness only from crypto/rand via shared/crypto (CLAUDE.md)}
+            - {pkg: math/rand/v2, desc: randomness only from crypto/rand via shared/crypto (CLAUDE.md)}
+  exclusions:
+    rules:
+      - linters: [forbidigo]
+        path-except: '(^|/)(authn|authz)/core/'
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/aleogr/iam

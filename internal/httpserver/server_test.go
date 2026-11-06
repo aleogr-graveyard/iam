@@ -30,7 +30,7 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || string(body) != "done" {
 		t.Fatalf("got %d %q", resp.StatusCode, body)
