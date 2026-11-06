@@ -6,7 +6,7 @@ Infraestrutura própria do iam no ambiente `lab`. O banco **não** fica aqui: o 
 
 | | |
 |---|---|
-| Projeto | `aleogr-lab-iam-c4vc` |
+| Projeto | `aleogr-lab-iam-c4vc`, na organização `421838980939` (a mesma do `aleogr-lab-shared-dacd`) |
 | Bucket de state | `gs://aleogr-lab-iam-c4vc-tfstate` (versionado) |
 | Quem aplica | o CI, via `.github/workflows/gcp.yml`, só a partir da `main` |
 
@@ -36,7 +36,7 @@ PROJECT=aleogr-lab-iam-c4vc
 BILLING=XXXXXX-XXXXXX-XXXXXX   # gcloud billing accounts list
 BUDGET=25BRL                   # moeda da conta de faturamento
 
-gcloud projects create "$PROJECT" --name="iam lab"
+gcloud projects create "$PROJECT" --name="iam lab" --organization=421838980939
 gcloud billing projects link "$PROJECT" --billing-account="$BILLING"
 
 gcloud services enable --project="$PROJECT" \
