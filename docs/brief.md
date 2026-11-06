@@ -355,6 +355,8 @@ Princípio proposto: **projetar para a resiliência, implantar para o custo.** A
 | 2. Primeiros clientes externos | Software de terceiros dependendo da plataforma | Cloud SQL em alta disponibilidade (standby em outra zona), réplica em outra região para desastres, Cloud Armor |
 | 3. Clientes com SLA exigente | Contratos com garantia de disponibilidade | Várias regiões, possivelmente GKE, bancos dedicados por tenant |
 
+- **[DECIDIDO]** Estágio 0 (laboratório): projeto `aleogr-lab-iam-c4vc`; o banco é inquilino da instância compartilhada `lab-postgres` do aleogr/lab, e não um Cloud SQL próprio, com teto de 6 conexões. A instância dorme de segunda a quinta, das 22:00 às 07:30. Ver [ADR 0001](adr/0001-lab-hosting.md).
+
 - **[PARA DISCUSSÃO]** Kubernetes não seria necessário para a minha hospedagem no início (custo fixo e operação), mas Helm charts seriam um entregável do projeto para quem faz self-hosting.
 - **[PARA DISCUSSÃO]** Metas explícitas por estágio: disponibilidade, perda de dados tolerada (RPO) e tempo de recuperação (RTO), para não prometer a clientes o que a infraestrutura do momento não sustenta.
 - **[PARA DISCUSSÃO]** Observabilidade com OpenTelemetry, usando cotas gratuitas no início (Cloud Logging/Monitoring ou Grafana Cloud), com volume de logs controlado.
@@ -374,7 +376,7 @@ Princípio proposto: **projetar para a resiliência, implantar para o custo.** A
 
 ### 4.17 Domínios e ambiente de desenvolvimento
 
-- **[PREFERÊNCIA]** Ambiente de desenvolvimento num subdomínio do lab, por exemplo `identity.lab.aleogr.dev`. O domínio `aleogr.dev` é meu e o subdomínio `lab.aleogr.dev`, gerenciado na Cloudflare, hospeda todos os meus projetos em desenvolvimento. Não haverá domínio próprio para o projeto no início.
+- **[PREFERÊNCIA]** Ambiente de desenvolvimento num subdomínio do lab, por exemplo `identity.lab.aleogr.dev`. O domínio `aleogr.dev` é meu e o subdomínio `lab.aleogr.dev`, gerenciado na Cloudflare, hospeda todos os meus projetos em desenvolvimento. Não haverá domínio próprio para o projeto no início. O registro `identity.lab.aleogr.dev` foi apagado junto com o projeto GCP anterior; o novo nome sob `lab.aleogr.dev` será escolhido quando houver serviço publicado.
 - **[BOA PRÁTICA]** Nenhum domínio fixo no código: issuer OIDC, RP ID do WebAuthn, domínios de cookies, URIs de redirecionamento e links de e-mail vêm de configuração.
 - **[PARA DISCUSSÃO]** Passkeys ficam presas ao RP ID: as registradas no domínio do lab não funcionam no domínio definitivo. Quando houver usuários reais, o AuthN deve estar no domínio definitivo.
 - **[BOA PRÁTICA]** RP ID o mais restrito possível (o subdomínio do AuthN), nunca `aleogr.dev`, que permitiria a qualquer projeto do lab solicitar as passkeys.
@@ -413,7 +415,7 @@ Princípio proposto: **projetar para a resiliência, implantar para o custo.** A
 - **[BOA PRÁTICA]** Segurança do pipeline:
   - branch principal protegida, verificações obrigatórias, sem push direto (nem do agente);
   - actions fixadas por hash de commit, não por tag;
-  - credenciais de nuvem via OIDC (Workload Identity Federation no GCP), sem segredos de longa duração.
+  - credenciais de nuvem via OIDC (Workload Identity Federation no GCP), sem segredos de longa duração. Em uso no laboratório desde 2026-11-06, com identidades separadas para `plan` (qualquer branch) e `apply` (só `main`): [ADR 0001](adr/0001-lab-hosting.md).
 
 ### 4.19 Segurança ofensiva contínua
 
@@ -859,7 +861,7 @@ Prioridade para as que definem o primeiro marco:
 1. O que é o projeto A e quando precisa estar rodando?
 2. Quem são os usuários finais dos projetos clientes (B2C, B2B, funcionários internos)? Qual a escala esperada?
 3. A e B compartilham usuários (login único) ou são tenants separados?
-4. Em qual região do GCP a plataforma vai rodar? Os dados precisam ficar no Brasil?
+4. Em qual região do GCP a plataforma vai rodar? Os dados precisam ficar no Brasil? Laboratório: `us-central1`, a região da instância compartilhada ([ADR 0001](adr/0001-lab-hosting.md)). Produção continua em aberto.
 5. Orçamento mensal máximo aceitável de nuvem no estágio inicial.
 6. Quais outros serviços, além de AuthN, AuthZ e e-mail, compõem a plataforma de infraestrutura? Vivem no mesmo monorepo?
 7. Versão única da plataforma ou versão por produto (seção 4.2).
