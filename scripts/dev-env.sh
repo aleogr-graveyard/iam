@@ -22,13 +22,13 @@ if [[ ! -f "$env_file" ]]; then
   (umask 077 && printf 'POSTGRES_PASSWORD=%s\n' "$pw" >"$env_file")
 fi
 
-docker compose --env-file "$env_file" up -d --wait
-
 password="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$env_file")"
 if [[ -z "$password" ]]; then
-  echo "dev-env: POSTGRES_PASSWORD missing in $env_file" >&2
+  echo "dev-env: POSTGRES_PASSWORD is empty or missing in $env_file; run 'make dev-reset' and try again" >&2
   exit 1
 fi
+
+docker compose --env-file "$env_file" up -d --wait
 
 export IAM_HTTP_ADDR="127.0.0.1:8080"
 export IAM_DATABASE_URL="postgres://iam:${password}@127.0.0.1:5432/iam?sslmode=disable"

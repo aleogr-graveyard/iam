@@ -55,11 +55,14 @@ check: lint lint-rules test vuln secrets licenses actions proto-check
 dev:
 	./scripts/dev-env.sh
 
+# `down` never uses the password; the placeholder only satisfies compose
+# interpolation, so teardown works even when .env.local is missing.
+COMPOSE_DOWN := POSTGRES_PASSWORD=unused docker compose $(if $(wildcard .env.local),--env-file .env.local,)
+
 dev-down:
-	@test -f .env.local || { echo "dev-down: .env.local not found; nothing to stop (run make dev-reset to clean up)"; exit 1; }
-	docker compose --env-file .env.local down
+	$(COMPOSE_DOWN) down
 
 # Drops the database volume and the generated password.
 dev-reset:
-	@if [ -f .env.local ]; then docker compose --env-file .env.local down -v; fi
+	$(COMPOSE_DOWN) down -v
 	rm -f .env.local
