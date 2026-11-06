@@ -17,11 +17,11 @@ para retomar a conversa em outra sessão. Pontos ainda abertos no fim.
 | 9 | Versionamento (pergunta 7) | Versão única para os componentes de produto; SDKs com versão própria pela versão da API. | 2026-11-06 |
 | 10 | Licença (pergunta 9, parte 1) | Apache-2.0 em todo o repositório; CLA se houver contribuições externas. Monetização ainda aberta. | 2026-11-06 |
 | 11 | Exceção da premissa 24 | Cobre JOSE/JWT: `go-jose` v4 (≥ 4.1.8), usado só dentro da camada criptográfica e sempre com lista explícita de algoritmos. | 2026-11-06 |
+| 12 | Escala e latência (premissa 22) | Metas de projeto verificadas por benchmark, não promessa de disponibilidade. p99 no servidor: validação de token no SDK < 1 ms; checagem AuthZEN (RBAC) < 10 ms; avaliação local < 1 ms; emissão de token (chave em memória) < 50 ms; login com passkey < 100 ms; login com senha < 500 ms. Escala: 10 M usuários por instalação, 100 mil tenants, 100 mil organizações por tenant, 1.000 logins/s, 50.000 checagens/s. | 2026-11-06 |
+| 13 | Proibições absolutas (pergunta 13) | Bloqueadas sempre: `alg: none` ou fora da lista; `redirect_uri` com curinga ou HTTP fora do loopback; implicit e ROPC; cliente público sem PKCE ou PKCE `plain`; senha reversível ou hash fora da lista; credencial/segredo/chave padrão; master e operadores sem MFA resistente a phishing; vinculação automática por e-mail não verificado; autorização fail-open; auditoria administrativa ou de segurança desligada; endpoints de autenticação sem TLS fora de desenvolvimento. Alertas críticos (não proibições): recuperação mais fraca que o MFA; métodos fracos como fator único; tokens de longa duração; login nativo via API. | 2026-11-06 |
 
 ## Ainda em aberto (ordem prevista)
 
-- Números de escala e de SLO como metas de projeto (premissa 22).
-- Lista de proibições absolutas (pergunta 13).
 - Discussão aprofundada de AuthZ (4.29), incluindo motor próprio × existente (pergunta 8) e linguagem de políticas.
 - Implicações da seção 5 do `docs/market-study/summary.md`.
 - Monetização (pergunta 9, parte 2), nomes (pergunta 10), app autenticador (15), macOS (16), metas por estágio (17).
