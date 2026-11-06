@@ -20,9 +20,18 @@ resource "google_sql_database" "iam" {
   depends_on = [google_project_service.enabled]
 }
 
-# Owns the schema and runs migrations. A built-in user, created WITHOUT a
-# password: the owner sets it by hand from the secret below, so the value
-# never passes through Terraform or its state.
+# Owns the schema and runs migrations. CREATED BY HAND AND IMPORTED: the
+# Cloud SQL API refuses a PostgreSQL user without a password ("Missing user
+# password"), and reading the password from Secret Manager here would also
+# hand it to the planner, which any pull request branch can act as. So the
+# owner created the user from the secret (deploy/gcp/README.md, section 5)
+# and this block adopts it without ever holding the password. Rotating it
+# is the same by-hand path: a new secret version, then set-password.
+import {
+  to = google_sql_user.migrator
+  id = "${var.shared_sql_project}/${var.shared_sql_instance}/iam_migrator"
+}
+
 resource "google_sql_user" "migrator" {
   project  = var.shared_sql_project
   instance = var.shared_sql_instance
