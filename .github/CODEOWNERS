@@ -1,0 +1,17 @@
+# Sensitive paths: the owner reviews and merges. Keep in sync with .github/sensitive-paths.txt (a test enforces it).
+/shared/crypto/** @aleogr
+/shared/tenancy/** @aleogr
+/shared/storage/** @aleogr
+/adapters/postgres/** @aleogr
+/authn/** @aleogr
+/authz/core/** @aleogr
+/authz/server/** @aleogr
+/.github/** @aleogr
+/deploy/** @aleogr
+/tools/** @aleogr
+/.golangci.yml @aleogr
+/Makefile @aleogr
+/scripts/** @aleogr
+/docs/adr/** @aleogr
+/docs/brief.md @aleogr
+/CLAUDE.md @aleogr

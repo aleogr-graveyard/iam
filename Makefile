@@ -22,6 +22,7 @@ test:
 	@for d in $$(go list -m -f '{{.Dir}}' | grep -v '^$(CURDIR)/e2e$$'); do \
 		(cd $$d && go test -race ./...) || exit 1; \
 	done
+	cd tools && GOWORK=off go test -race ./...
 
 # Builds the server and test client A and runs them against a real database.
 e2e:
@@ -30,11 +31,13 @@ e2e:
 build:
 	go build -trimpath -o dist/iam ./cmd/iam
 
-# Lints every module in go.work (tools/lintfixture is deliberately outside it).
+# Lints every module in go.work plus the tools module (the repo's own tool code;
+# tools/<tool>/ and tools/lintfixture are nested modules and are not part of it).
 lint:
 	@for d in $$(go list -m -f '{{.Dir}}'); do \
 		(cd $$d && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...) || exit 1; \
 	done
+	cd tools && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...
 
 lint-rules:
 	./scripts/check-lint-rules.sh

@@ -27,7 +27,7 @@ contra ele; os arquivos de comunidade e de CRA existem.
 | OPS-007 | Imagem com `ko`, base fixada por digest, varredura e SBOM (CycloneDX) | ✅ | OPS-003 |
 | OPS-008 | `LICENSE` (Apache-2.0), `SECURITY.md`, `CONTRIBUTING.md`, política de suporte | ✅ | — |
 | OPS-009 | Harness e2e com esqueleto do cliente de teste A | ✅ | OPS-005, OPS-006 |
-| OPS-010 | Checks obrigatórios no ruleset, `CODEOWNERS` das áreas sensíveis, auto-merge fora delas | ⏳ | OPS-003 |
+| OPS-010 | Checks obrigatórios no ruleset, `CODEOWNERS` das áreas sensíveis, auto-merge fora delas (falta: checks obrigatórios no ruleset, dono) | 🚧 | OPS-003 |
 | OPS-011 | Workflows noturnos: fuzzing longo e benchmarks com detecção de regressão | ⏳ | OPS-003 |
 
 ## Marco 1: AuthN e AuthZ mínimos, ponta a ponta

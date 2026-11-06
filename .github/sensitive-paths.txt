@@ -1,0 +1,16 @@
+shared/crypto/**
+shared/tenancy/**
+shared/storage/**
+adapters/postgres/**
+authn/**
+authz/core/**
+authz/server/**
+.github/**
+deploy/**
+tools/**
+.golangci.yml
+Makefile
+scripts/**
+docs/adr/**
+docs/brief.md
+CLAUDE.md
