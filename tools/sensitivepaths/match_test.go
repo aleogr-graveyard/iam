@@ -8,7 +8,7 @@ import (
 )
 
 func TestMatch(t *testing.T) {
-	patterns := []string{"authn/**", "authz/core/**", "shared/crypto/**", ".github/**", "docs/brief.md", "CLAUDE.md", "Makefile", "a/**/b.go"}
+	patterns := []string{"authn/**", "authz/core/**", "shared/crypto/**", ".github/**", "docs/brief.md", "CLAUDE.md", "Makefile", "a/**/b.go", "**/secret.txt"}
 	cases := []struct {
 		path string
 		want bool
@@ -29,6 +29,10 @@ func TestMatch(t *testing.T) {
 		{"a/x/y/b.go", true},
 		{"a/x/c.go", false},
 		{"", false},
+		{"secret.txt", true},
+		{"x/y/secret.txt", true},
+		{"x/secret.txt.bak", false},
+		{".github/old-name.yml", true}, // previous_filename of a rename is checked like any path
 	}
 	for _, c := range cases {
 		if got := Match(patterns, c.path); got != c.want {
@@ -79,5 +83,28 @@ func TestCodeownersInSync(t *testing.T) {
 	})
 	if !slices.Equal(want, got) {
 		t.Fatalf("CODEOWNERS patterns differ from sensitive-paths.txt:\n%v\n%v", got, want)
+	}
+}
+
+func TestReadPatternsRejectsBadInput(t *testing.T) {
+	for _, in := range []string{"authn/\n", "/authn/**\n", "a//b\n", "a/[b\n", "# only a comment\n", ""} {
+		if _, err := readPatterns(strings.NewReader(in)); err == nil {
+			t.Errorf("readPatterns(%q) = nil error, want error", in)
+		}
+	}
+	got, err := readPatterns(strings.NewReader("# c\n\nauthn/**\nMakefile\n"))
+	if err != nil || !slices.Equal(got, []string{"authn/**", "Makefile"}) {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestRunErrors(t *testing.T) {
+	var out strings.Builder
+	if err := run("does-not-exist.txt", strings.NewReader("a\n"), &out); err == nil {
+		t.Error("missing patterns file: want error")
+	}
+	long := strings.Repeat("a", maxLine+1) + "\n"
+	if err := run("../../.github/sensitive-paths.txt", strings.NewReader(long), &out); err == nil {
+		t.Error("over-long input line: want error")
 	}
 }

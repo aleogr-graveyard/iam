@@ -2,6 +2,16 @@ name: Sensitive paths
 
 # pull_request, never pull_request_target: PR code must not run with a privileged
 # token. Fork PRs get a read-only token, so the guard only acts on same-repo PRs.
+#
+# The guard (matcher source and patterns file) is taken from the BASE ref, never
+# from the PR, so a PR cannot neuter it. Consequence: the very first PR that
+# introduces the guard fails closed, because the base has no tool yet.
+#
+# Fails closed: any error disables auto-merge (if enabled), is written to the
+# step summary, and fails the job. The job is not a required check.
+#
+# Known race: an already-green PR can merge before this job runs. Only the
+# required checks in the ruleset (owner step) close that window.
 on:
   pull_request:
     types: [opened, synchronize, reopened, auto_merge_enabled]
@@ -20,29 +30,66 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
-      # Never fails the PR: it is not a required check. It lists sensitive files
-      # and removes auto-merge so that only the owner merges them.
       - name: Check changed paths
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTO_MERGE: ${{ github.event.pull_request.auto_merge != null }}
         run: |
-          matches="$(gh pr diff "$PR_NUMBER" --name-only | (cd tools && GOWORK=off go run ./sensitivepaths ../.github/sensitive-paths.txt))" || true
+          set -euo pipefail
+
+          disable_auto() {
+            [ "$AUTO_MERGE" = "true" ] || return 0
+            if gh pr merge --disable-auto "$PR_NUMBER"; then
+              echo "Auto-merge disabled." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "FAILED to disable auto-merge." >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+          }
+
+          fail() {
+            {
+              echo "### Sensitive-paths guard error (failing closed)"
+              echo
+              echo "$1"
+            } >> "$GITHUB_STEP_SUMMARY"
+            disable_auto || true
+            exit 1
+          }
+
+          if [ ! -f base/tools/sensitivepaths/main.go ] || [ ! -f base/.github/sensitive-paths.txt ]; then
+            fail "The base ref has no guard tool or patterns file."
+          fi
+
+          # Renames list both the new and the previous path: both are checked.
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')" \
+            || fail "Could not list the files of the pull request."
+
+          matches="$(printf '%s\n' "$files" \
+            | (cd base/tools && GOWORK=off go run ./sensitivepaths ../.github/sensitive-paths.txt))" \
+            || fail "The path matcher failed."
+
           if [ -z "$matches" ]; then
             echo "No sensitive paths changed." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           {
             echo "### Sensitive paths changed (owner merges)"
             echo
-            echo "$matches" | sed 's/^/- `/; s/$/`/'
+            echo '~~~~~~'
+            echo "$matches"
+            echo '~~~~~~'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$AUTO_MERGE" = "true" ]; then
-            gh pr merge --disable-auto "$PR_NUMBER" || true
-            echo "Auto-merge disabled." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          disable_auto || exit 1
