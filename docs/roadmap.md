@@ -18,7 +18,7 @@ contra ele; os arquivos de comunidade e de CRA existem.
 
 | ID | Item | Status | Depende de |
 |---|---|---|---|
-| OPS-001 | Estrutura de módulos, `go.work`, `cmd/iam` com health check | ⏳ | — |
+| OPS-001 | Estrutura de módulos, `go.work`, `cmd/iam` com health check | ✅ | — |
 | OPS-002 | `golangci-lint` com regras de fronteira (`depguard`, `forbidigo`) e um teste que prova que uma violação falha | ⏳ | OPS-001 |
 | OPS-003 | CI geral: formatação, lint, `go vet`, testes com `-race`, `govulncheck`, `gosec`, `gitleaks`, licenças, `actionlint` | ⏳ | OPS-002 |
 | OPS-004 | `buf`: lint, breaking, geração verificada, Protobuf mínimo | ⏳ | OPS-001 |

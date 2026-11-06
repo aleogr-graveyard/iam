@@ -4,3 +4,6 @@
 *.tfstate.*
 *.tfplan
 crash.log
+
+# Build output.
+dist/
