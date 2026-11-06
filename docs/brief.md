@@ -121,7 +121,7 @@ iam/
 ### 4.2 Versionamento e ciclo de vida
 
 - **[DECIDIDO] Versionamento híbrido:** componentes de produto compartilham uma versão de produto; SDKs têm versões próprias e seguem a versão da API (v1, v2), não a do servidor.
-- **[ABERTO]** Com dois produtos: uma versão única da plataforma ou uma versão por produto (AuthN e AuthZ)?
+- **[DECIDIDO]** Com dois produtos: uma versão única da plataforma ou uma versão por produto (AuthN e AuthZ)? Versão única dos componentes de produto: [ADR 0008](adr/0008-single-product-version.md).
 - **[PARA DISCUSSÃO]** A versão única simplifica releases (por exemplo, permitiria usar o GoReleaser gratuito com uma configuração na raiz). Versões independentes por produto exigiriam GoReleaser Pro, um contorno frágil ou um pipeline próprio (recomendado na seção 4.18, que funciona com qualquer estratégia).
 - **[PARA DISCUSSÃO]** Tags prefixadas por componente quando necessário (por exemplo `authn/core/v1.4.0`), suportadas nativamente pelo Go.
 - **[PARA DISCUSSÃO]** release-please para gerar tags e changelogs por componente.
@@ -132,7 +132,7 @@ iam/
 - **[PREFERÊNCIA]** Go como linguagem principal (núcleos e servidores). Também uso Rust, e outras linguagens virão.
 - **[PARA DISCUSSÃO]** Outras linguagens consomem a plataforma como serviço: via OIDC com bibliotecas cliente padrão, via AuthZEN para autorização, e via SDKs gerados a partir das definições da API para as funções administrativas. O modo biblioteca existiria apenas para Go.
 - **[PARA DISCUSSÃO]** Não reimplementar núcleos em outra linguagem nem usar pontes FFI (Go chamado a partir de Rust, por exemplo), pelo risco de duplicar a superfície de bugs em código de segurança.
-- **[PARA DISCUSSÃO]** Protobuf/gRPC com `buf` para as APIs administrativas (geração de clientes multilinguagem e detecção de mudanças incompatíveis). Avaliar convivência com OpenAPI/REST.
+- **[DECIDIDO]** Protobuf/gRPC com `buf` para as APIs administrativas (geração de clientes multilinguagem e detecção de mudanças incompatíveis). Avaliar convivência com OpenAPI/REST. Protobuf servido com Connect (gRPC e HTTP/JSON), OpenAPI gerada: [ADR 0006](adr/0006-admin-api-protobuf-connect.md).
 - **[PARA DISCUSSÃO]** Durante o desenvolvimento, projetos clientes apontam para cópias locais (`go.work` em Go, `[patch]` ou `path` no Cargo em Rust).
 
 ### 4.4 Arquitetura
@@ -147,11 +147,11 @@ iam/
 - **[PARA DISCUSSÃO]** Métodos de autenticação como módulos plugáveis atrás de uma interface comum de "autenticador".
 - **[PARA DISCUSSÃO]** Relógio e gerador de aleatoriedade injetados como dependências (testes determinísticos de expiração, TOTP, bloqueios).
 - **[PARA DISCUSSÃO]** Envio de mensagens como interface com pelo menos dois adaptadores: um que chama o serviço de notificações e outro que envia direto via SMTP (para quem usa só a biblioteca).
-- **[PARA DISCUSSÃO]** Serviço de e-mail como camada sobre provedores (SMTP, Amazon SES, Postmark etc.), com templates, filas, tentativas e registro, e **não** como servidor de e-mail próprio, por causa da entregabilidade.
+- **[PARA DISCUSSÃO]** Serviço de e-mail como camada sobre provedores (SMTP, Amazon SES, Postmark etc.), com templates, filas, tentativas e registro, e **não** como servidor de e-mail próprio, por causa da entregabilidade. O serviço de e-mail será um produto de infraestrutura em repositório próprio; o iam mantém só a porta de envio com adaptador SMTP: [ADR 0003](adr/0003-one-repository-per-infrastructure-product.md).
 - **[PARA DISCUSSÃO]** **Monólito modular:** componentes separados no código, mas implantáveis juntos como um único binário no início (reduz custo) e separáveis depois.
 - **[PARA DISCUSSÃO]** Extensões por adaptadores compilados junto, não por plugins carregados em tempo de execução (o pacote `plugin` do Go não funciona no Windows e exige versões idênticas de compilação). Plugins fora do processo via gRPC podem servir para extensões fora do caminho crítico.
 - **[PARA DISCUSSÃO]** PostgreSQL como banco principal (seção 4.8).
-- **[ABERTO]** Event sourcing nos núcleos (como o Zitadel) ou modelo de estado tradicional com log de auditoria separado.
+- **[DECIDIDO]** Event sourcing nos núcleos (como o Zitadel) ou modelo de estado tradicional com log de auditoria separado. Estado tradicional em tabelas e log de auditoria encadeado, sem event sourcing: [ADR 0005](adr/0005-state-tables-and-hash-chained-audit.md).
 
 **Máquinas de estados**
 - **[PARA DISCUSSÃO]** Máquinas de estados explícitas como padrão de design para fluxos e ciclos de vida: fluxos de autenticação, conta, convite, sessão, código de dispositivo, token, chave, tenant, solicitações de aprovação. Tabela de transições com condições (guards); transições não previstas recusadas por definição.
@@ -209,7 +209,7 @@ tokens:
 - **[PARA DISCUSSÃO]** Alertas críticos exigem ciência registrada (quem, quando, justificativa) no log de auditoria; a ciência expira, forçando revisão periódica.
 - **[PARA DISCUSSÃO]** Painel de postura de segurança por aplicação e organização; alertas também expostos via API.
 - **[PARA DISCUSSÃO]** Modo estrito opcional, que transforma alertas críticos em erros e pode ser imposto por um nível superior da hierarquia.
-- **[PARA DISCUSSÃO]** Lista curta de proibições absolutas para configurações sem nenhum uso legítimo (por exemplo: tokens com `alg: none`, URIs de redirecionamento com curingas ou em HTTP fora de desenvolvimento, armazenamento reversível de senhas, master sem MFA resistente a phishing), bloqueadas mesmo com a filosofia de alertar.
+- **[DECIDIDO]** Lista curta de proibições absolutas para configurações sem nenhum uso legítimo (por exemplo: tokens com `alg: none`, URIs de redirecionamento com curingas ou em HTTP fora de desenvolvimento, armazenamento reversível de senhas, master sem MFA resistente a phishing), bloqueadas mesmo com a filosofia de alertar. Lista aprovada: [ADR 0012](adr/0012-absolute-prohibitions.md).
 - **[BOA PRÁTICA]** Padrões seguros: a configuração inicial já é segura; alertas só aparecem quando alguém se afasta dela conscientemente.
 - **[BOA PRÁTICA]** Métodos classificados por nível de garantia: resistentes a phishing (WebAuthn: passkeys e chaves físicas), intermediários (TOTP, push com confirmação de número), fracos (códigos por SMS, WhatsApp e e-mail, sujeitos a SIM swap, interceptação e phishing em tempo real). Os fracos ficam disponíveis, mas desligados por padrão.
 
@@ -328,8 +328,8 @@ tokens:
 - **[PARA DISCUSSÃO]** Gestão de sessões por dispositivo, com revogação individual.
 - **[PARA DISCUSSÃO]** Verificação de app genuíno (Play Integrity, App Attest) como recurso avançado.
 - **[PARA DISCUSSÃO]** SDKs adicionais conforme a necessidade: TypeScript, Kotlin, Swift e possivelmente Flutter ou React Native, cobrindo AuthN e AuthZ.
-- **[ABERTO]** App autenticador próprio para MFA por push e para aprovações multipartes, ou SDK mobile para os apps clientes receberem essas notificações.
-- **[ABERTO]** Suporte a macOS (não mencionado nos requisitos, mas o design não deve impedi-lo).
+- **[DECIDIDO]** App autenticador próprio para MFA por push e para aprovações multipartes, ou SDK mobile para os apps clientes receberem essas notificações. Sem app próprio; push e aprovações via passkeys/WebAuthn, SDK mobile depois: [ADR 0026](adr/0026-no-own-authenticator-app.md).
+- **[DECIDIDO]** Suporte a macOS (não mencionado nos requisitos, mas o design não deve impedi-lo). O design não bloqueia macOS; suporte quando houver demanda: [ADR 0029](adr/0029-macos-not-blocked.md).
 
 ### 4.15 Resiliência e custo
 
@@ -387,7 +387,7 @@ Princípio proposto: **projetar para a resiliência, implantar para o custo.** A
 - **[PARA DISCUSSÃO]** Restringir o acesso ao ambiente do lab, ao menos aos painéis administrativos (por exemplo, Cloudflare Access). Nunca usar dados pessoais reais no lab.
 - **[PARA DISCUSSÃO]** SPF, DKIM e DMARC no domínio de envio, com um subdomínio de envio por projeto para isolar a reputação.
 - **[PARA DISCUSSÃO]** Domínios próprios por tenant ou organização no futuro (por exemplo, `login.clinicax.com.br`), com certificados automáticos; candidato a recurso pago.
-- **[ABERTO]** Issuer por tenant por caminho ou por subdomínio.
+- **[DECIDIDO]** Issuer por tenant por caminho ou por subdomínio. Por caminho, vindo de configuração por tenant: [ADR 0007](adr/0007-path-based-tenant-issuer.md).
 
 ### 4.18 CI/CD (GitHub Actions)
 
@@ -629,7 +629,7 @@ graph LR
 - **[BOA PRÁTICA]** Em caso de falha, negar (fail closed); a resiliência vem da avaliação local e do cache, não de liberar o acesso.
 - **[BOA PRÁTICA]** Tokens leves: papéis amplos no token; permissões finas consultadas no ponto de decisão.
 - **[PARA DISCUSSÃO]** Listagem eficiente em grandes volumes.
-- **[PARA DISCUSSÃO]** Linguagem de políticas: própria ou existente (Cedar, Rego, a linguagem de modelagem do OpenFGA).
+- **[DECIDIDO]** Linguagem de políticas: própria ou existente (Cedar, Rego, a linguagem de modelagem do OpenFGA). Núcleo compatível com Cedar, com extensões explícitas: [ADR 0015](adr/0015-authz-cedar-core-language.md).
 - **[PARA DISCUSSÃO]** Governança de políticas: quem escreve, como são revisadas, testadas e versionadas.
 
 **Motor de decisão**
@@ -637,7 +637,7 @@ graph LR
   - relacionais (estilo Zanzibar): OpenFGA, SpiceDB (Go, Apache 2.0; rodam como serviço com banco próprio);
   - de políticas, embutíveis como biblioteca Go: Cedar, Casbin, OPA (preservam o monólito modular e o custo baixo);
   - motor próprio (alinhado à premissa 24, mas exige cuidado redobrado por ser código crítico).
-- **[ABERTO]** Motor próprio, motor existente embutido ou motor existente como serviço.
+- **[DECIDIDO]** Motor próprio, motor existente embutido ou motor existente como serviço. Motor próprio, com `cedar-go` só como oráculo de teste: [ADR 0014](adr/0014-authz-own-engine-with-oracle.md).
 
 ### 4.30 Qualidade de código, dependências e padrões
 
@@ -649,7 +649,7 @@ graph LR
 - **[PARA DISCUSSÃO]** Política de dependências:
   - preferir a biblioteca padrão do Go e pacotes mantidos pelo time do Go (`golang.org/x/...`);
   - implementar a lógica de protocolo e de produto (fluxos OIDC, políticas, máquinas de estados, worker pools etc.);
-  - **exceção de segurança:** primitivas criptográficas, hash de senhas e analisadores com armadilhas conhecidas (assinaturas XML do SAML, formatos binários do WebAuthn) usam a biblioteca padrão ou bibliotecas consolidadas e auditadas, nunca implementação própria (premissa 2);
+  - **exceção de segurança:** primitivas criptográficas, hash de senhas e analisadores com armadilhas conhecidas (assinaturas XML do SAML, formatos binários do WebAuthn) usam a biblioteca padrão ou bibliotecas consolidadas e auditadas, nunca implementação própria (premissa 2); **[DECIDIDO]** Inclui JOSE/JWT, via `go-jose` v4: [ADR 0010](adr/0010-jose-via-go-jose.md).
   - toda dependência nova exige justificativa registrada e atende a critérios: manutenção ativa, licença compatível, histórico de segurança, poucas dependências transitivas;
   - revisão periódica das dependências e do SBOM (também relevante para o Cyber Resilience Act).
 - **[PREFERÊNCIA]** Padrões de projeto sempre que pertinentes, em sua forma idiomática em Go, sem complexidade desnecessária. Exemplos já previstos: worker pool, pipeline, fan-out/fan-in, portas e adaptadores, strategy (autenticadores), middleware, state (máquinas de estados), outbox, circuit breaker, functional options, repository.
@@ -845,7 +845,7 @@ Validar com especialistas jurídicos antes de decisões de produto; várias est�
 
 ## 8. Open source e monetização
 
-- **[ABERTO]** Licença: Apache-2.0 (comum no setor, inclui concessão de patentes), MIT, AGPL-3.0 (protege contra concorrência hospedada, mas reduz adoção) ou source-available (BSL, FSL). APIs e SDKs podem ter licença mais permissiva que os servidores.
+- **[DECIDIDO]** Licença: Apache-2.0 (comum no setor, inclui concessão de patentes), MIT, AGPL-3.0 (protege contra concorrência hospedada, mas reduz adoção) ou source-available (BSL, FSL). APIs e SDKs podem ter licença mais permissiva que os servidores. Apache-2.0: [ADR 0009](adr/0009-apache-2-license.md).
 - **[ABERTO]** Modelo de monetização: open core, versões gerenciadas (IDaaS e AuthZ gerenciado), suporte. Referências: Zitadel (AGPL + licença comercial + nuvem), Ory (Apache + licença enterprise + serviço gerenciado), Authentik (MIT + recursos enterprise), Pomerium (núcleo aberto + planos de controle pagos), OpenFGA e Auth0 FGA (motor aberto + versão hospedada).
 - **[PARA DISCUSSÃO]** AuthN e AuthZ adotáveis e comercializáveis separadamente.
 - **[ABERTO]** Quais recursos seriam pagos: soberania de dados (seção 4.8), domínios próprios por tenant (seção 4.17), modo FIPS, suporte etc.
@@ -858,22 +858,22 @@ Validar com especialistas jurídicos antes de decisões de produto; várias est�
 
 Prioridade para as que definem o primeiro marco:
 
-1. O que é o projeto A e quando precisa estar rodando?
-2. Quem são os usuários finais dos projetos clientes (B2C, B2B, funcionários internos)? Qual a escala esperada?
+1. O que é o projeto A e quando precisa estar rodando? → Projetos fictícios, só para testes: [ADR 0002](adr/0002-test-client-projects.md).
+2. Quem são os usuários finais dos projetos clientes (B2C, B2B, funcionários internos)? Qual a escala esperada? → Sem projeto real por enquanto; metas de escala como metas de projeto: [ADR 0011](adr/0011-latency-and-scale-targets.md).
 3. A e B compartilham usuários (login único) ou são tenants separados?
 4. Em qual região do GCP a plataforma vai rodar? Os dados precisam ficar no Brasil? Laboratório: `us-central1`, a região da instância compartilhada ([ADR 0001](adr/0001-lab-hosting.md)). Produção continua em aberto.
 5. Orçamento mensal máximo aceitável de nuvem no estágio inicial.
-6. Quais outros serviços, além de AuthN, AuthZ e e-mail, compõem a plataforma de infraestrutura? Vivem no mesmo monorepo?
-7. Versão única da plataforma ou versão por produto (seção 4.2).
-8. Motor de decisão do AuthZ e linguagem de políticas (seção 4.29).
-9. Licença e modelo de monetização (seção 8).
+6. Quais outros serviços, além de AuthN, AuthZ e e-mail, compõem a plataforma de infraestrutura? Vivem no mesmo monorepo? → Cada produto de infraestrutura no seu repositório: [ADR 0003](adr/0003-one-repository-per-infrastructure-product.md).
+7. Versão única da plataforma ou versão por produto (seção 4.2). → [ADR 0008](adr/0008-single-product-version.md).
+8. Motor de decisão do AuthZ e linguagem de políticas (seção 4.29). → [ADR 0014](adr/0014-authz-own-engine-with-oracle.md) e [ADR 0015](adr/0015-authz-cedar-core-language.md).
+9. Licença e modelo de monetização (seção 8). → Licença: [ADR 0009](adr/0009-apache-2-license.md). Monetização continua em aberto.
 10. Nomes definitivos (seção 10), decididos antes da primeira versão.
-11. Event sourcing ou não (seção 4.4).
-12. Protobuf/gRPC, OpenAPI/REST ou ambos (seção 4.3).
-13. Lista de proibições absolutas (seção 4.6).
-14. Issuer por tenant: por caminho ou por subdomínio (seção 4.17).
-15. App autenticador próprio para push e aprovações (seção 4.14).
-16. Suporte a macOS.
+11. Event sourcing ou não (seção 4.4). → [ADR 0005](adr/0005-state-tables-and-hash-chained-audit.md).
+12. Protobuf/gRPC, OpenAPI/REST ou ambos (seção 4.3). → [ADR 0006](adr/0006-admin-api-protobuf-connect.md).
+13. Lista de proibições absolutas (seção 4.6). → [ADR 0012](adr/0012-absolute-prohibitions.md).
+14. Issuer por tenant: por caminho ou por subdomínio (seção 4.17). → [ADR 0007](adr/0007-path-based-tenant-issuer.md).
+15. App autenticador próprio para push e aprovações (seção 4.14). → [ADR 0026](adr/0026-no-own-authenticator-app.md).
+16. Suporte a macOS. → [ADR 0029](adr/0029-macos-not-blocked.md).
 17. Metas de disponibilidade, RPO e RTO por estágio (seção 4.15).
 
 ## 10. Nomes candidatos
