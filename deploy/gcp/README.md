@@ -108,16 +108,19 @@ gcloud storage buckets add-iam-policy-binding "gs://$PROJECT-tfstate" \
 
 ### 5. Banco no `lab-postgres`
 
-Só com a instância acordada (fora de seg–qui, 22:00–07:30). Antes do merge do PR
-que declara o banco, o dono habilita `sqladmin` e `secretmanager` e concede
+**Executado em 2026-11-06.** Só com a instância acordada (fora de seg–qui,
+22:00–07:30). Antes do merge do PR que declara o banco, o dono habilita `sqladmin` e `secretmanager` e concede
 `roles/secretmanager.admin` ao `iam-deployer` (a declaração em
 `ci_identities.tf` mantém isso depois; conceder e usar no mesmo apply corre
 contra a propagação do IAM). Depois do apply:
 
 1. Gerar a senha direto no Secret Manager, sem passar pela tela:
    `openssl rand -base64 32 | tr -d '\n' | gcloud secrets versions add iam-migrator-password --project=$PROJECT --data-file=-`
-2. Definir a senha do `iam_migrator` a partir do secret
-   (`gcloud sql users set-password`).
+2. Criar o `iam_migrator` lendo a senha do secret:
+   `gcloud sql users create iam_migrator --instance=lab-postgres --project=aleogr-lab-shared-dacd --password="$(gcloud secrets versions access 1 --secret=iam-migrator-password --project=$PROJECT)"`.
+   A API do Cloud SQL recusa usuário Postgres sem senha, então o Terraform
+   **importa** o usuário em vez de criá-lo (`database.tf`). Para rotacionar:
+   nova versão do secret e `gcloud sql users set-password` do mesmo jeito.
 3. Abrir o Cloud SQL Auth Proxy em `127.0.0.1` e rodar `../sql/bootstrap.sql`
    como `iam_migrator` no banco `iam`.
 4. Conferir: `CONNECT` só para `iam_migrator` e `iam_app`, `datconnlimit = 6`,

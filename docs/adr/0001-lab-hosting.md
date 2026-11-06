@@ -27,8 +27,8 @@ pode ser reutilizado.
 3. **Contas de runtime:** `iam-release`, `iam-run`, `iam-migrate`.
 4. **Banco como inquilino do `lab-postgres`:** banco `iam` com
    `deletion_policy = "ABANDON"`; `iam_migrator` (usuário com senha, dono do
-   schema, criado sem senha pelo Terraform; a senha é gerada no Secret Manager
-   e aplicada à mão, sem passar pelo state); `iam_app` (role sem login, só
+   schema; a senha é gerada no Secret Manager e o usuário é criado à mão a
+   partir dela e importado pelo Terraform, que nunca conhece a senha); `iam_app` (role sem login, só
    DML, sujeita a RLS); o serviço entra como usuário IAM `iam-run`, membro de
    `iam_app`, sem senha. Migração de bootstrap: `REVOKE CONNECT ... FROM PUBLIC`,
    `GRANT CONNECT` por nome, `CONNECTION LIMIT 6`.
