@@ -5,10 +5,21 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+for tool in docker openssl go; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "dev-env: required tool not found: $tool" >&2
+    exit 1
+  fi
+done
+
 env_file=".env.local"
 if [[ ! -f "$env_file" ]]; then
-  umask 077
-  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 16)" >"$env_file"
+  pw="$(openssl rand -hex 16)" || pw=""
+  if [[ -z "$pw" ]]; then
+    echo "dev-env: failed to generate a password with openssl" >&2
+    exit 1
+  fi
+  (umask 077 && printf 'POSTGRES_PASSWORD=%s\n' "$pw" >"$env_file")
 fi
 
 docker compose --env-file "$env_file" up -d --wait

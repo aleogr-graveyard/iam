@@ -10,7 +10,7 @@ GO_LICENSES   := $(call gotool,go-licenses)
 BUF           := $(call gotool,buf)
 CRANE         := $(call gotool,crane)
 
-.PHONY: dev dev-down test build lint lint-rules vuln secrets licenses actions proto proto-check check
+.PHONY: dev dev-down dev-reset test build lint lint-rules vuln secrets licenses actions proto proto-check check
 
 test:
 	go test -race ./...
@@ -56,4 +56,10 @@ dev:
 	./scripts/dev-env.sh
 
 dev-down:
-	docker compose down
+	@test -f .env.local || { echo "dev-down: .env.local not found; nothing to stop (run make dev-reset to clean up)"; exit 1; }
+	docker compose --env-file .env.local down
+
+# Drops the database volume and the generated password.
+dev-reset:
+	@if [ -f .env.local ]; then docker compose --env-file .env.local down -v; fi
+	rm -f .env.local
