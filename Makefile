@@ -10,7 +10,7 @@ GO_LICENSES   := $(call gotool,go-licenses)
 BUF           := $(call gotool,buf)
 CRANE         := $(call gotool,crane)
 
-.PHONY: test build lint lint-rules vuln secrets licenses actions proto proto-check check
+.PHONY: dev dev-down test build lint lint-rules vuln secrets licenses actions proto proto-check check
 
 test:
 	go test -race ./...
@@ -50,3 +50,10 @@ proto-check:
 	GOWORK=off BUF='go tool -modfile=$(CURDIR)/tools/buf/go.mod buf' ./scripts/check-proto.sh
 
 check: lint lint-rules test vuln secrets licenses actions proto-check
+
+# Local environment: PostgreSQL in Docker Compose plus the server on 127.0.0.1:8080.
+dev:
+	./scripts/dev-env.sh
+
+dev-down:
+	docker compose down

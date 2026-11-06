@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Starts the local environment: PostgreSQL via Docker Compose, then the server.
+# The generated password lives only in .env.local (git-ignored).
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+env_file=".env.local"
+if [[ ! -f "$env_file" ]]; then
+  umask 077
+  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 16)" >"$env_file"
+fi
+
+docker compose --env-file "$env_file" up -d --wait
+
+password="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$env_file")"
+if [[ -z "$password" ]]; then
+  echo "dev-env: POSTGRES_PASSWORD missing in $env_file" >&2
+  exit 1
+fi
+
+export IAM_HTTP_ADDR="127.0.0.1:8080"
+export IAM_DATABASE_URL="postgres://iam:${password}@127.0.0.1:5432/iam?sslmode=disable"
+echo "dev-env: server on http://${IAM_HTTP_ADDR} (database URL not shown)"
+exec go run ./cmd/iam
