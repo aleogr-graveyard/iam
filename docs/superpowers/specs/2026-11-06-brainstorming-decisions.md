@@ -1,0 +1,27 @@
+# Brainstorming: decisões aprovadas (rascunho de trabalho)
+
+Registro corrido das decisões aprovadas pelo dono durante o brainstorming. Vira
+ADRs (um por decisão) no fim do brainstorming; até lá, este arquivo é a fonte
+para retomar a conversa em outra sessão. Pontos ainda abertos no fim.
+
+| # | Tema (brief) | Decisão | Data |
+|---|---|---|---|
+| 1 | Projetos A, B, C (seção 3; pergunta 1) | Fictícios e mínimos, só para testar o iam durante o desenvolvimento; são os clientes de teste de `examples/` e dos cenários de referência (4.20). Sem prazo. | 2026-11-06 |
+| 2 | Primeiro consumidor real | Nenhum por enquanto. O iam é o primeiro de vários projetos de infraestrutura; os projetos finais ainda não existem. | 2026-11-06 |
+| 3 | Outros serviços de infraestrutura (pergunta 6) | Cada produto de infraestrutura no seu próprio repositório. `notifications/` sai do iam; fica a porta de envio com adaptador SMTP direto (e, depois, o do serviço de e-mail). Código comum é publicado como módulo Go. | 2026-11-06 |
+| 4 | Capacidade de revisão do dono | Mais de 10 h/semana. O gargalo é a qualidade da verificação automatizada. | 2026-11-06 |
+| 5 | Marcos iniciais | Marco 0 "fábrica" (CI geral, fronteiras, varreduras, estrutura de módulos, ferramentas de contrato, ambiente local, harness e2e com o cliente A, checks obrigatórios). Marco 1: AuthN e AuthZ mínimos ponta a ponta no lab: cliente A faz login OIDC com senha e passkey numa organização de um tenant, recebe token e consulta permissão RBAC via AuthZEN; a plataforma usa esse RBAC nos papéis administrativos. | 2026-11-06 |
+| 6 | Event sourcing (pergunta 11) | Não. Estado tradicional em tabelas + log de auditoria encadeado por hash, só de inclusão; outbox para eventos externos. | 2026-11-06 |
+| 7 | API administrativa (pergunta 12) | Protobuf como fonte, servido com Connect (gRPC e HTTP/JSON), OpenAPI gerada; `buf breaking` no CI. APIs de protocolo seguem as especificações. | 2026-11-06 |
+| 8 | Issuer por tenant (pergunta 14) | Por caminho (`https://<host>/t/<tenant>`), vindo de configuração por tenant (subdomínio ou domínio próprio possível depois). Teste de abuso obrigatório: sessão e passkey nunca valem fora do próprio tenant. | 2026-11-06 |
+| 9 | Versionamento (pergunta 7) | Versão única para os componentes de produto; SDKs com versão própria pela versão da API. | 2026-11-06 |
+| 10 | Licença (pergunta 9, parte 1) | Apache-2.0 em todo o repositório; CLA se houver contribuições externas. Monetização ainda aberta. | 2026-11-06 |
+| 11 | Exceção da premissa 24 | Cobre JOSE/JWT: `go-jose` v4 (≥ 4.1.8), usado só dentro da camada criptográfica e sempre com lista explícita de algoritmos. | 2026-11-06 |
+
+## Ainda em aberto (ordem prevista)
+
+- Números de escala e de SLO como metas de projeto (premissa 22).
+- Lista de proibições absolutas (pergunta 13).
+- Discussão aprofundada de AuthZ (4.29), incluindo motor próprio × existente (pergunta 8) e linguagem de políticas.
+- Implicações da seção 5 do `docs/market-study/summary.md`.
+- Monetização (pergunta 9, parte 2), nomes (pergunta 10), app autenticador (15), macOS (16), metas por estágio (17).
