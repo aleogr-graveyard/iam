@@ -43,7 +43,11 @@ jobs:
         with:
           go-version-file: base/go.mod
           cache-dependency-path: "**/go.sum"
+      # Runs even when an earlier step failed (e.g. setup-go cannot read
+      # base/go.mod because the base ref predates the guard): the script then
+      # fails closed and disables auto-merge instead of being skipped.
       - name: Check changed paths
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
