@@ -1,0 +1,6 @@
+# Terraform working directories and local state never leave the machine.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
