@@ -37,9 +37,8 @@ vuln:
 secrets:
 	$(GITLEAKS) git --redact --no-banner
 
-# The root module is ignored until the LICENSE file lands (Task 8 removes the ignore).
 licenses:
-	$(GO_LICENSES) check ./... --ignore github.com/aleogr/iam --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC
+	$(GO_LICENSES) check ./... --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC
 
 actions:
 	$(ACTIONLINT)
