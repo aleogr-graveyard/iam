@@ -21,10 +21,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Runs the benchmarks of every go.work module (not e2e) found under $1.
+# Runs the benchmarks of every go.work module (not e2e) found under $1. The module
+# list is captured on its own so that a go failure aborts instead of looking like
+# "no benchmarks".
 run_benchmarks() {
-	local top=$1 d
-	for d in $(cd "$top" && go list -m -f '{{.Dir}}'); do
+	local top=$1 d dirs
+	dirs=$(cd "$top" && go list -m -f '{{.Dir}}')
+	for d in $dirs; do
 		[ "$d" = "$top/e2e" ] && continue
 		(cd "$d" && go test -run='^$' -bench=. -benchmem -count=10 ./...)
 	done

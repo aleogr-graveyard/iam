@@ -1,0 +1,17 @@
+goos: linux
+goarch: amd64
+pkg: x/a
+,memory.base.txt,,memory.head.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+A-4,1.0004499999999999e-06,0%,1.0004499999999999e-06,0%,~,p=1.000 n=10
+geomean,1.0004499999999992e-06,,1.0004499999999992e-06,,+0.00%,
+
+,memory.base.txt,,memory.head.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+A-4,64,0%,96.5,1%,+50.78%,p=0.000 n=10
+geomean,63.99999999999998,,96.5,,+50.78%,
+
+,memory.base.txt,,memory.head.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+A-4,2,0%,4.5,11%,+125.00%,p=0.000 n=10
+geomean,2,,4.500000000000001,,+125.00%,

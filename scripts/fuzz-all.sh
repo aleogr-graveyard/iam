@@ -14,7 +14,9 @@ failed=0
 # fuzz_dir <module dir>: `go test -list` prints the matching names of a package
 # followed by its "ok <pkg>" line, which is how targets are tied to a package.
 fuzz_dir() {
-	local dir=$1 line names=() name pkg pkgdir rel
+	local dir=$1 line names=() name pkg pkgdir rel listing
+	# Captured first so that a build failure fails the script (set -e).
+	listing=$(cd "$dir" && go test -list '^Fuzz' ./... </dev/null)
 	while IFS= read -r line; do
 		case "$line" in
 		Fuzz*) names+=("$line") ;;
@@ -36,7 +38,7 @@ fuzz_dir() {
 			names=()
 			;;
 		esac
-	done < <(cd "$dir" && go test -list '^Fuzz' ./... </dev/null)
+	done <<<"$listing"
 }
 
 # Collect the module list first so no command below can consume its stdin.

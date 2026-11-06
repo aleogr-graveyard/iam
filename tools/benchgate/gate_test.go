@@ -64,10 +64,50 @@ func TestRegressions_MalformedCSV(t *testing.T) {
 		"\"unterminated,quote\n",
 		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,1%,2,1%,+nope%,p=0.001 n=10\n",
 		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,1%,2,1%,+25.00%,garbage\n",
-		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,2\n",
+		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,2,3,4,5,6,7\n",
+		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,1%,2,1%,NaN%,p=0.001 n=10\n",
+		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,1%,2,1%,+25.00%,p=NaN n=10\n",
+		"A-4,1,1%,2,1%,+25.00%,p=0.001 n=10\n",
+		// No gated row compared: only a geomean, only one-sided rows, only "?".
+		",sec/op,CI,sec/op,CI,vs base,P\ngeomean,1,,2,,+25.00%,\n",
+		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,0%\nB-4,,,1,0%\n",
+		",sec/op,CI,sec/op,CI,vs base,P\nA-4,1,1%,2,1%,?,p=0.001 n=10\n",
 	} {
 		if _, err := Regressions(strings.NewReader(in), 10, 0.05); err == nil {
 			t.Errorf("input %q: expected an error", in)
 		}
+	}
+}
+
+func TestRegressions_MemoryUnits(t *testing.T) {
+	got, err := regressionsFrom(t, "memory.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	units := map[string]bool{}
+	for _, r := range got {
+		units[r.Unit] = true
+	}
+	if len(got) != 2 || !units["B/op"] || !units["allocs/op"] {
+		t.Fatalf("want B/op and allocs/op regressions, got %+v", got)
+	}
+}
+
+// Real benchstat output with a benchmark only in the base and one only in the head.
+func TestRegressions_OneSidedBenchmarks(t *testing.T) {
+	got, err := regressionsFrom(t, "onesided.csv")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// Real benchstat output for two packages: "pkg: x" lines appear between tables.
+func TestRegressions_MultiPackage(t *testing.T) {
+	got, err := regressionsFrom(t, "multipkg.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Benchmark != "B-4" {
+		t.Fatalf("got %+v", got)
 	}
 }
