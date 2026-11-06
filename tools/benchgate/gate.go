@@ -36,6 +36,15 @@ const (
 	oneSidedHead = 5
 )
 
+// scan holds the state of one pass over the benchstat tables.
+type scan struct {
+	maxDelta, alpha float64
+	unit            string
+	tables          int
+	compared        int
+	out             []Regression
+}
+
 // Regressions parses `benchstat -format csv` output and returns every row of a
 // gated unit whose delta exceeds maxDelta percent with p < alpha. Any input it
 // cannot fully understand is an error, and so is input where no gated row was
@@ -43,12 +52,7 @@ const (
 func Regressions(in io.Reader, maxDelta, alpha float64) ([]Regression, error) {
 	r := csv.NewReader(in)
 	r.FieldsPerRecord = -1
-	var (
-		out      []Regression
-		unit     string
-		tables   int
-		compared int
-	)
+	s := &scan{maxDelta: maxDelta, alpha: alpha}
 	for {
 		rec, err := r.Read()
 		if errors.Is(err, io.EOF) {
@@ -57,38 +61,54 @@ func Regressions(in io.Reader, maxDelta, alpha float64) ([]Regression, error) {
 		if err != nil {
 			return nil, fmt.Errorf("benchgate: reading csv: %w", err)
 		}
-		switch {
-		case len(rec) == 1:
-			continue // config line between tables, e.g. "pkg: x" or "goos: linux"
-		case isHeader(rec):
-			unit = rec[colUnit]
-			tables++
-			continue
-		case len(rec) == columns && rec[colName] == "":
-			continue // the row naming the base and head input files
-		case tables == 0:
-			return nil, fmt.Errorf("benchgate: unexpected record %q before any benchstat table", rec)
-		case len(rec) == oneSidedBase || len(rec) == oneSidedHead:
-			continue // benchmark present on one side only: nothing to compare
-		}
-		reg, found, counted, err := parseRow(rec, unit, maxDelta, alpha)
-		if err != nil {
+		if err := s.record(rec); err != nil {
 			return nil, err
 		}
-		if counted {
-			compared++
-		}
-		if found {
-			out = append(out, reg)
-		}
 	}
-	if tables == 0 {
+	if s.tables == 0 {
 		return nil, errors.New("benchgate: no benchstat table found in input")
 	}
-	if compared == 0 {
+	if s.compared == 0 {
 		return nil, errors.New("benchgate: no benchmark was compared (nothing on both sides)")
 	}
-	return out, nil
+	return s.out, nil
+}
+
+func (s *scan) record(rec []string) error {
+	switch {
+	case ignorable(rec):
+		return nil
+	case isHeader(rec):
+		s.unit = rec[colUnit]
+		s.tables++
+		return nil
+	case s.tables == 0:
+		return fmt.Errorf("benchgate: unexpected record %q before any benchstat table", rec)
+	}
+	reg, found, counted, err := parseRow(rec, s.unit, s.maxDelta, s.alpha)
+	if err != nil {
+		return err
+	}
+	if counted {
+		s.compared++
+	}
+	if found {
+		s.out = append(s.out, reg)
+	}
+	return nil
+}
+
+// ignorable reports records that carry nothing to compare: config lines between
+// tables ("pkg: x", "goos: linux"), the row naming the input files, and
+// benchmarks present on one side only.
+func ignorable(rec []string) bool {
+	switch len(rec) {
+	case 1, oneSidedBase, oneSidedHead:
+		return true
+	case columns:
+		return rec[colName] == "" && !isHeader(rec)
+	}
+	return false
 }
 
 func isHeader(rec []string) bool {
