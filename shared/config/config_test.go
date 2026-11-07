@@ -76,6 +76,48 @@ func TestLoad_FileRejectsUnknownAndDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestLoad_EmptyEnvCountsAsUnset(t *testing.T) {
+	file := `{"cursor_key": "` + goodKey + `"}`
+	cfg, _, err := Load(env(map[string]string{
+		"IAM_PUBLIC_BASE_URL": "https://iam.example.com",
+		"IAM_CONFIG_FILE":     "f",
+		"IAM_CURSOR_KEY":      "",
+	}), func(string) ([]byte, error) { return []byte(file), nil })
+	if err != nil || cfg.CursorKey != goodKey {
+		t.Fatalf("file value must survive an empty variable: %v", err)
+	}
+}
+
+func TestLoad_FileValueTypes(t *testing.T) {
+	for _, file := range []string{`{"http_addr": 8080}`, `{"database_app_role": 1}`} {
+		_, _, err := Load(env(prod(map[string]string{"IAM_CONFIG_FILE": "f"})), func(string) ([]byte, error) { return []byte(file), nil })
+		if err == nil {
+			t.Fatalf("%s: number accepted for a string field", file)
+		}
+	}
+}
+
+func TestLoad_UnknownKeyNotEchoed(t *testing.T) {
+	_, _, err := Load(env(prod(map[string]string{"IAM_CONFIG_FILE": "f"})), func(string) ([]byte, error) { return []byte(`{"hunter2": 1}`), nil })
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoad_MalformedPublicBaseURL(t *testing.T) {
+	for _, u := range []string{"https://x?", "https://x#", "https://:443", "https://x/?a=b", "https://x/", "HTTPS://x", "https://u:p@x", "ftp://x", "https://x/a#f"} {
+		_, _, err := Load(env(prod(map[string]string{"IAM_PUBLIC_BASE_URL": u})), noFile)
+		if err == nil {
+			t.Errorf("%q accepted", u)
+		}
+	}
+	for _, u := range []string{"https://iam.example.com", "https://iam.example.com:8443/base"} {
+		if _, _, err := Load(env(prod(map[string]string{"IAM_PUBLIC_BASE_URL": u})), noFile); err != nil {
+			t.Errorf("%q rejected: %v", u, err)
+		}
+	}
+}
+
 func TestLoad_ReportsAllInvalidFields(t *testing.T) {
 	_, _, err := Load(env(prod(map[string]string{
 		"IAM_SHUTDOWN_TIMEOUT":   "abc",
@@ -202,8 +244,12 @@ func FuzzLoad(f *testing.F) {
 		}
 		cfg, _, err := Load(env(m), noFile)
 		if err != nil {
-			if strings.Contains(c, "@") && strings.Contains(err.Error(), c) {
-				t.Fatalf("secret echoed in error")
+			// Fixed words of the messages are not leaks.
+			msg := strings.NewReplacer("postgres", "", "base64", "", "http", "", "https", "").Replace(err.Error())
+			for _, v := range m {
+				if len(v) >= 4 && strings.Contains(msg, v) {
+					t.Fatalf("a field value was echoed in the error")
+				}
 			}
 			return
 		}
@@ -216,7 +262,7 @@ func assertSafe(t *testing.T, cfg Config) {
 	if cfg.ShutdownTimeout <= 0 || !cfg.Environment.known() {
 		t.Fatalf("accepted invalid config: %+v", cfg)
 	}
-	if cfg.Environment != Development && (!strings.HasPrefix(cfg.PublicBaseURL, "https://") || cfg.CursorKey == "") {
+	if cfg.Environment != Development && (!strings.HasPrefix(strings.ToLower(cfg.PublicBaseURL), "https://") || cfg.CursorKey == "") {
 		t.Fatalf("prohibition bypassed: %+v", cfg)
 	}
 }

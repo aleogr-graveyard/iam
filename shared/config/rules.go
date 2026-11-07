@@ -49,7 +49,7 @@ func environmentRule(c *Config) ([]Finding, []string) {
 
 func publicBaseURLRule(c *Config) ([]Finding, []string) {
 	if c.PublicBaseURL == "" {
-		return nil, []string{"IAM_PUBLIC_BASE_URL: required"}
+		return nil, nil // reported as required by the tag
 	}
 	u, ok := parseBaseURL(c.PublicBaseURL)
 	if !ok {
@@ -68,10 +68,15 @@ func publicBaseURLRule(c *Config) ([]Finding, []string) {
 
 func parseBaseURL(s string) (*url.URL, bool) {
 	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return nil, false
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(u.Path, "/") {
+	// "?" and "#" cover empty queries and fragments; the round trip rejects
+	// non-canonical spellings such as an upper-case scheme.
+	if strings.ContainsAny(s, "?#") || u.String() != s {
+		return nil, false
+	}
+	if u.User != nil || strings.HasSuffix(u.Path, "/") {
 		return nil, false
 	}
 	return u, true

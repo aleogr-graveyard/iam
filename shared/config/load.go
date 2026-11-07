@@ -91,7 +91,8 @@ func (f field) set(s string) error {
 
 // Load builds the configuration. It returns every problem at once: a single
 // error naming each invalid field and each prohibited setting. Findings below
-// Prohibited are returned for the caller to log. Errors never contain field
+// Prohibited are returned for the caller to log. An empty environment
+// variable counts as unset (getenv cannot tell the two apart). Errors never contain field
 // values, so secrets cannot leak through them.
 func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Config, []Finding, error) {
 	var cfg Config
@@ -102,6 +103,7 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 		problems = append(problems, applyFile(fs, path, readFile)...)
 	}
 	problems = append(problems, applyEnv(fs, getenv)...)
+	problems = append(problems, requiredProblems(fs)...)
 
 	findings, vp := validate(&cfg)
 	problems = append(problems, vp...)
@@ -152,7 +154,7 @@ func applyFile(fs []field, path string, readFile func(string) ([]byte, error)) [
 	}
 	var doc map[string]any
 	if err := jsonx.DecodeStrict(bytes.NewReader(raw), &doc, jsonx.DefaultLimits); err != nil {
-		return []string{"IAM_CONFIG_FILE: " + err.Error()}
+		return []string{"IAM_CONFIG_FILE: " + decodeProblem(err)}
 	}
 	byKey := make(map[string]field, len(fs))
 	for _, f := range fs {
@@ -167,15 +169,15 @@ func applyFile(fs []field, path string, readFile func(string) ([]byte, error)) [
 	sort.Strings(keys)
 
 	var problems []string
-	for _, k := range keys {
+	for i, k := range keys {
 		f, ok := byKey[k]
 		if !ok {
-			problems = append(problems, fmt.Sprintf("config file: unknown key %q", truncate(k, 64)))
+			problems = append(problems, fmt.Sprintf("config file: unknown key at sorted position %d", i+1))
 			continue
 		}
-		s, ok := fileValue(doc[k])
+		s, ok := fileValue(doc[k], f.value.Kind())
 		if !ok {
-			problems = append(problems, fmt.Sprintf("config file key %q: must be a string or a number", k))
+			problems = append(problems, fmt.Sprintf("config file key %q: wrong JSON type for this field", k))
 			continue
 		}
 		if err := f.set(s); err != nil {
@@ -185,19 +187,46 @@ func applyFile(fs []field, path string, readFile func(string) ([]byte, error)) [
 	return problems
 }
 
-func fileValue(v any) (string, bool) {
+// fileValue converts a JSON value to the text form set parses. Numbers are
+// accepted only for numeric fields.
+func fileValue(v any, kind reflect.Kind) (string, bool) {
 	switch x := v.(type) {
 	case string:
 		return x, true
 	case float64:
+		if kind == reflect.String {
+			return "", false
+		}
 		return strconv.FormatFloat(x, 'f', -1, 64), true
 	}
 	return "", false
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+// decodeProblem maps a jsonx error to a fixed message that echoes no input.
+func decodeProblem(err error) string {
+	switch {
+	case errors.Is(err, jsonx.ErrTooLarge):
+		return "file too large"
+	case errors.Is(err, jsonx.ErrTooDeep):
+		return "file nested too deeply"
+	case errors.Is(err, jsonx.ErrDuplicateKey):
+		return "duplicate key in file"
+	case errors.Is(err, jsonx.ErrUnknownField):
+		return "unknown field in file"
+	case errors.Is(err, jsonx.ErrTrailingData):
+		return "trailing data after the JSON document"
+	default:
+		return "file is not a valid JSON object"
 	}
-	return s[:n]
+}
+
+// requiredProblems reports required fields left empty after all sources.
+func requiredProblems(fs []field) []string {
+	var out []string
+	for _, f := range fs {
+		if f.required && f.value.IsZero() {
+			out = append(out, f.env+": required")
+		}
+	}
+	return out
 }
