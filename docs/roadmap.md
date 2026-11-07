@@ -27,7 +27,7 @@ contra ele; os arquivos de comunidade e de CRA existem.
 | OPS-007 | Imagem com `ko`, base fixada por digest, varredura e SBOM (CycloneDX) | ✅ | OPS-003 |
 | OPS-008 | `LICENSE` (Apache-2.0), `SECURITY.md`, `CONTRIBUTING.md`, política de suporte | ✅ | — |
 | OPS-009 | Harness e2e com esqueleto do cliente de teste A | ✅ | OPS-005, OPS-006 |
-| OPS-010 | Checks obrigatórios no ruleset, `CODEOWNERS` das áreas sensíveis, auto-merge fora delas (falta: checks obrigatórios no ruleset, dono) | 🚧 | OPS-003 |
+| OPS-010 | Checks obrigatórios no ruleset, `CODEOWNERS` das áreas sensíveis, auto-merge fora delas | ✅ | OPS-003 |
 | OPS-011 | Workflows noturnos: fuzzing longo e benchmarks com detecção de regressão | ✅ | OPS-003 |
 
 ## Marco 1: AuthN e AuthZ mínimos, ponta a ponta
@@ -140,7 +140,7 @@ Levantadas nas revisões do marco 0; entram nos itens indicados.
 | Reprodutibilidade provada no build do `ko` (com ldflags), não só no `go build` | antes do primeiro release |
 | Advisories nas ferramentas de `tools/*` sem relatório (só o módulo distribuído é barrado) | OPS-011, relatório noturno não bloqueante |
 | Dono rodar `make dev` uma vez (Docker não existia no ambiente de desenvolvimento) | antes de fechar o marco 0 |
-| Dono decidir: ampliar `.github/sensitive-paths.txt` (`.ko.yaml`, `go.work`, `buf.*`, `api/**`, `go.mod`/`go.sum`) e mover o guarda para `pull_request_target` | OPS-010 |
+| Dono decidir: ampliar `.github/sensitive-paths.txt` (`.ko.yaml`, `go.work`, `buf.*`, `api/**`, `go.mod`/`go.sum`) e mover o guarda para `pull_request_target` | decisão do dono, sem item no roadmap |
 
 ## Camadas seguintes (ordem proposta, detalhadas quando o marco anterior fechar)
 
