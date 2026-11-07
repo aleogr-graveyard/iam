@@ -63,6 +63,8 @@ func TestE2E_ClientAReachesIAM(t *testing.T) {
 
 	iamAddr := proc.FreeAddr(t)
 	iam := proc.Start(t, iamBin, []string{
+		"IAM_ENVIRONMENT=development",
+		"IAM_PUBLIC_BASE_URL=http://" + iamAddr,
 		"IAM_HTTP_ADDR=" + iamAddr,
 		"IAM_DATABASE_URL=" + dbURL,
 	})

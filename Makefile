@@ -14,7 +14,7 @@ CYCLONEDX     := $(call gotool,cyclonedx-gomod)
 OSV_SCANNER   := $(call gotool,osv-scanner)
 BENCHSTAT     := $(call gotool,benchstat)
 
-.PHONY: dev dev-down dev-reset test e2e build lint lint-rules workspace-check vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench dev-check
+.PHONY: dev dev-down dev-reset test e2e build lint lint-rules workspace-check vuln secrets licenses actions proto proto-check config-doc config-doc-check image sbom scan repro check fuzz bench dev-check
 
 # Every module listed in go.work is self-contained, so each is tested from its own
 # directory. The e2e module is excluded on purpose: it needs built binaries and its
@@ -74,6 +74,15 @@ proto:
 proto-check:
 	GOWORK=off BUF='go tool -modfile=$(CURDIR)/tools/buf/go.mod buf' ./scripts/check-proto.sh
 
+# Regenerates the configuration reference from the struct tags of shared/config.
+config-doc:
+	go run ./shared/config/cmd/configdoc > docs/config-reference.md
+
+# Fails when the committed reference differs from what the tags produce.
+config-doc-check:
+	@go run ./shared/config/cmd/configdoc | diff -u docs/config-reference.md - \
+		|| { echo "docs/config-reference.md is stale; run 'make config-doc'" >&2; exit 1; }
+
 # Image targets are slow and need the network, so they are not part of `check`;
 # CI runs them in the Image job.
 # The tarball holds one platform (an OCI tarball cannot carry an index) and ko.local
@@ -105,7 +114,7 @@ BASE ?= origin/main
 bench:
 	BENCHSTAT='$(BENCHSTAT)' ./scripts/bench-compare.sh $(BASE)
 
-check: workspace-check lint lint-rules test vuln secrets licenses actions proto-check
+check: workspace-check lint lint-rules test vuln secrets licenses actions proto-check config-doc-check
 
 # Local environment: PostgreSQL in Docker Compose plus the server on 127.0.0.1:8080.
 dev:
