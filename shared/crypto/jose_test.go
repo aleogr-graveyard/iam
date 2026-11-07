@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -13,7 +14,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"log/slog"
+	"math/big"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -450,13 +456,46 @@ func TestVerify_ClaimsDecodedStrictly(t *testing.T) {
 	priv := key.Private.(*ecdsa.PrivateKey)
 	header := `{"alg":"ES256","kid":"` + key.ID + `"}`
 	for name, payload := range map[string]string{
-		"duplicate": `{"sub":"a","sub":"admin"}`,
-		"unknown":   `{"sub":"a","role":"admin"}`,
-		"trailing":  `{"sub":"a"}{}`,
-		"not json":  `sub=a`,
+		"duplicate":         `{"sub":"a","sub":"admin"}`,
+		"case duplicate":    `{"sub":"a","SUB":"admin"}`,
+		"case only":         `{"SUB":"admin"}`,
+		"unknown duplicate": `{"sub":"a","role":1,"role":2}`,
+		"trailing":          `{"sub":"a"}{}`,
+		"not json":          `sub=a`,
 	} {
 		if err := v.Verify(forge(header, payload, es256(t, priv)), new(testClaims)); !errors.Is(err, ErrMalformedToken) {
 			t.Errorf("%s: err = %v, want ErrMalformedToken", name, err)
+		}
+	}
+}
+
+// RFC 7519 section 4: claims that are not understood are ignored, so an
+// issuer may add claims without breaking verifiers.
+func TestVerify_IgnoresUnknownClaims(t *testing.T) {
+	key := newKey(t)
+	v := newVerifier(t, newKeySet(t, key))
+	header := `{"alg":"ES256","kid":"` + key.ID + `"}`
+	payload := `{"sub":"a","aud":"b","new_claim":{"x":[1,2]},"scope":"openid"}`
+	var c testClaims
+	if err := v.Verify(forge(header, payload, es256(t, key.Private.(*ecdsa.PrivateKey))), &c); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if c != (testClaims{Sub: "a", Aud: "b"}) {
+		t.Fatalf("claims = %+v", c)
+	}
+}
+
+func TestVerify_RejectsInvalidDestination(t *testing.T) {
+	ks := newKeySet(t, newKey(t))
+	v := newVerifier(t, ks)
+	token, err := ks.Sign(testClaims{Sub: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nilPtr *testClaims
+	for name, dst := range map[string]any{"nil": nil, "value": testClaims{}, "nil pointer": nilPtr} {
+		if err := v.Verify(token, dst); !errors.Is(err, ErrInvalidDestination) {
+			t.Errorf("%s: err = %v, want ErrInvalidDestination", name, err)
 		}
 	}
 }
@@ -470,7 +509,7 @@ func TestVerify_ErrorsHaveNoTokenContent(t *testing.T) {
 		forge(`{"alg":"`+marker+`","kid":"`+marker+`"}`, `{"sub":"`+marker+`"}`, es256(t, priv)),
 		forge(`{"alg":"ES256","kid":"`+marker+`"}`, `{"sub":"`+marker+`"}`, es256(t, priv)),
 		forge(`{"alg":"ES256","kid":"`+key.ID+`","`+marker+`":1}`, `{}`, es256(t, priv)),
-		forge(`{"alg":"ES256","kid":"`+key.ID+`"}`, `{"`+marker+`":1}`, es256(t, priv)),
+		forge(`{"alg":"ES256","kid":"`+key.ID+`"}`, `{"`+marker+`":1,"`+marker+`":2}`, es256(t, priv)),
 		marker + "." + marker + "." + marker,
 	}
 	for _, tok := range tokens {
@@ -498,7 +537,7 @@ func TestNewVerifier_RejectsUnsupportedAlgorithms(t *testing.T) {
 	if _, err := NewVerifier(dup, []Algorithm{ES256}); !errors.Is(err, ErrInvalidKey) {
 		t.Errorf("duplicate kid: err = %v, want ErrInvalidKey", err)
 	}
-	if _, err := NewVerifier([]PublicKey{{ID: "x", Alg: ES256}}, []Algorithm{ES256}); !errors.Is(err, ErrInvalidKey) {
+	if _, err := NewVerifier([]PublicKey{{}}, []Algorithm{ES256}); !errors.Is(err, ErrInvalidKey) {
 		t.Errorf("zero key: err = %v, want ErrInvalidKey", err)
 	}
 }
@@ -560,7 +599,7 @@ func TestKid_IsRFC7638Thumbprint(t *testing.T) {
 		t.Fatalf("alg = %s", key.Alg)
 	}
 	pub, err := key.Public()
-	if err != nil || pub.ID != rfc7517Thumbprint || pub.Alg != ES256 {
+	if err != nil || pub.ID() != rfc7517Thumbprint || pub.Alg() != ES256 {
 		t.Fatalf("Public() = %+v, %v", pub, err)
 	}
 	gen := newKey(t)
@@ -657,6 +696,9 @@ func TestParseES256PrivateKeysPEM_Rejects(t *testing.T) {
 		"duplicate":     append(pkcs8PEM(t, k1), pkcs8PEM(t, k1)...),
 		"oversize":      append(pkcs8PEM(t, k1), make([]byte, MaxKeyPEMBytes)...),
 		"bad DER":       pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{0x30, 0x01}}),
+		"skipped block": append([]byte("-----BEGIN JUNK-----\nnot base64 !!\n"), pkcs8PEM(t, k1)...),
+		"unclosed key":  append([]byte("-----BEGIN PRIVATE KEY-----\nAAAA\n"), pkcs8PEM(t, k1)...),
+		"skipped later": append(append(pkcs8PEM(t, k1), "-----BEGIN X-----\n"...), pkcs8PEM(t, newKey(t).Private)...),
 	}
 	for name, data := range cases {
 		_, err := ParseES256PrivateKeysPEM(data)
@@ -702,7 +744,7 @@ func FuzzVerify(f *testing.F) {
 		var dst map[string]any
 		err := v.Verify(tok, &dst)
 		if err == nil {
-			if tok != fuzzToken {
+			if tok != fuzzToken && tok != fuzzTokenTwin {
 				t.Fatalf("mutated token accepted: %q", tok)
 			}
 			return
@@ -719,11 +761,187 @@ func FuzzVerify(f *testing.F) {
 	})
 }
 
+// fuzzTokenTwin is fuzzToken with s replaced by n - s: ECDSA malleability
+// makes it verify too, which is why tokens are identified by jti, never by
+// their bytes.
+var fuzzTokenTwin = highSTwin(fuzzToken)
+
+func highSTwin(token string) string {
+	p := strings.Split(token, ".")
+	sig, err := b64u.DecodeString(p[2])
+	if err != nil || len(sig) != 64 {
+		panic("bad fixture")
+	}
+	s := new(big.Int).SetBytes(sig[32:])
+	s.Sub(elliptic.P256().Params().N, s)
+	twin := make([]byte, 64)
+	copy(twin, sig[:32])
+	s.FillBytes(twin[32:])
+	return p[0] + "." + p[1] + "." + b64u.EncodeToString(twin)
+}
+
+func TestFuzzToken_HighSTwinVerifies(t *testing.T) {
+	if fuzzTokenTwin == fuzzToken {
+		t.Fatal("twin equals the token")
+	}
+	v := newVerifier(t, newKeySet(t, rfcSigningKey(t)))
+	if err := v.Verify(fuzzTokenTwin, new(map[string]any)); err != nil {
+		t.Fatalf("high-S twin: %v", err)
+	}
+}
+
 // Keeps fuzzToken honest: it must verify, or FuzzVerify proves nothing.
 func TestFuzzToken_IsValid(t *testing.T) {
 	v := newVerifier(t, newKeySet(t, rfcSigningKey(t)))
 	var c map[string]any
 	if err := v.Verify(fuzzToken, &c); err != nil || c["sub"] != "fuzz" {
 		t.Fatalf("fuzzToken: %v, %v", c, err)
+	}
+}
+
+// A P-256 key (d = 43) whose y coordinate starts with a zero byte: x and y
+// must stay 32 bytes (43 base64url characters) in the thumbprint and the
+// JWKS. Expected values computed outside Go.
+func TestKid_LeadingZeroCoordinate(t *testing.T) {
+	const (
+		wantX   = "mGriUG8f8QTQQjCGHY9LSY9LxMbQCbMPdUTcEpuC0o0"
+		wantY   = "ADzMwKZGDgrjKKTZfTx7YdhvxiicGJ8lJREMRBuwfpc"
+		wantKid = "WZsjbh58q8kl1WsGShqtiycImZtCgGbukDn4RAacMig"
+	)
+	d := make([]byte, 32)
+	d[31] = 43
+	priv, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := ParseES256PrivateKeysPEM(pkcs8PEM(t, priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys[0].ID != wantKid {
+		t.Fatalf("kid = %s, want %s", keys[0].ID, wantKid)
+	}
+	jwks, err := newKeySet(t, keys[0]).PublicJWKS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var set struct {
+		Keys []struct{ X, Y string } `json:"keys"`
+	}
+	if err := json.Unmarshal(jwks, &set); err != nil {
+		t.Fatal(err)
+	}
+	if set.Keys[0].X != wantX || set.Keys[0].Y != wantY {
+		t.Fatalf("x, y = %s, %s", set.Keys[0].X, set.Keys[0].Y)
+	}
+}
+
+func TestKeySet_ConcurrentSignVerify(t *testing.T) {
+	ks := newKeySet(t, newKey(t), newKey(t))
+	v := newVerifier(t, ks)
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for g := range 16 {
+		wg.Go(func() {
+			for i := range 20 {
+				in := testClaims{Sub: strconv.Itoa(g), Aud: strconv.Itoa(i)}
+				tok, err := ks.Sign(in)
+				if err != nil {
+					errs <- err
+					return
+				}
+				var out testClaims
+				if err := v.Verify(tok, &out); err != nil || out != in {
+					errs <- fmt.Errorf("verify %+v: %v", out, err)
+					return
+				}
+				_, _ = ks.PublicJWKS()
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+type failingClaims struct{}
+
+func (failingClaims) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("SECRETMARKER in claims")
+}
+
+func TestSign_ErrorHasNoClaimContent(t *testing.T) {
+	ks := newKeySet(t, newKey(t))
+	for name, claims := range map[string]any{"marshaler": failingClaims{}, "func": map[string]any{"SECRETMARKER": func() {}}} {
+		_, err := ks.Sign(claims)
+		if !errors.Is(err, ErrInvalidClaims) {
+			t.Errorf("%s: err = %v, want ErrInvalidClaims", name, err)
+		} else if strings.Contains(err.Error(), "SECRETMARKER") {
+			t.Errorf("%s: error leaks claims: %v", name, err)
+		}
+	}
+}
+
+func TestPublicKey_DoesNotAliasPrivateKey(t *testing.T) {
+	key := newKey(t)
+	pub, err := key.Public()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := key.Private.(*ecdsa.PrivateKey)
+	if pub.key == &priv.PublicKey || !pub.key.Equal(&priv.PublicKey) {
+		t.Fatal("public key aliases the private key's or differs from it")
+	}
+	for _, p := range newKeySet(t, key).PublicKeys() {
+		if p.key == &priv.PublicKey {
+			t.Fatal("KeySet public key aliases the private key's")
+		}
+	}
+}
+
+// A SigningKey must be safe to log and impossible to serialize by accident.
+func TestSigningKey_NeverExposesPrivateKey(t *testing.T) {
+	key := rfcSigningKey(t)
+	if _, err := json.Marshal(key); !errors.Is(err, ErrKeyNotSerializable) {
+		t.Errorf("json.Marshal(key): err = %v", err)
+	}
+	if _, err := json.Marshal(struct{ K SigningKey }{key}); err == nil {
+		t.Error("json.Marshal of a struct holding a key succeeded")
+	}
+	if _, err := json.Marshal(&key); err == nil {
+		t.Error("json.Marshal(&key) succeeded")
+	}
+	if _, err := key.MarshalText(); !errors.Is(err, ErrKeyNotSerializable) {
+		t.Errorf("MarshalText: err = %v", err)
+	}
+}
+
+func TestSigningKey_RedactsWhenFormattedOrLogged(t *testing.T) {
+	key := rfcSigningKey(t)
+	dec := new(big.Int).SetBytes(mustB64(t, rfc7517D)).String()
+	leaks := func(s string) bool { return strings.Contains(s, rfc7517D) || strings.Contains(s, dec) }
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+		for _, arg := range []any{key, &key, []SigningKey{key}} {
+			out := fmt.Sprintf(verb, arg)
+			if leaks(out) || !strings.Contains(out, "REDACTED") || !strings.Contains(out, key.ID) {
+				t.Errorf("%s of %T: %s", verb, arg, out)
+			}
+		}
+	}
+	if s := key.String(); s != key.GoString() || !strings.Contains(s, "ES256") || !strings.Contains(s, "REDACTED") {
+		t.Errorf("String/GoString = %q / %q", s, key.GoString())
+	}
+}
+
+func TestSigningKey_LogValueRedacts(t *testing.T) {
+	key := rfcSigningKey(t)
+	dec := new(big.Int).SetBytes(mustB64(t, rfc7517D)).String()
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("loaded", "key", key)
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("loaded", "key", key)
+	if out := buf.String(); strings.Contains(out, rfc7517D) || strings.Contains(out, dec) || strings.Count(out, key.ID) != 2 {
+		t.Errorf("slog output: %s", buf.String())
 	}
 }

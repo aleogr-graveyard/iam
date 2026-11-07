@@ -36,7 +36,6 @@ func (s source) SigningKeys(ctx context.Context) ([]crypto.SigningKey, error) {
 		return nil, fmt.Errorf("localfile: reading %s: %w", s.path, err)
 	}
 	keys, err := crypto.ParseES256PrivateKeysPEM(data)
-	clear(data)
 	if err != nil {
 		return nil, fmt.Errorf("localfile: %s: %w", s.path, err)
 	}

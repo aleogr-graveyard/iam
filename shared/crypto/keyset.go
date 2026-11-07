@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/cryptosigner"
@@ -22,6 +23,8 @@ const MaxKeyPEMBytes = 64 << 10
 
 // SigningKey is a private signing key. ID is the RFC 7638 JWK thumbprint
 // (SHA-256, unpadded base64url) of its public key and is used as the JWS kid.
+// It is safe to log (fmt and slog show ID and Alg only) and refuses JSON and
+// text marshaling.
 type SigningKey struct {
 	ID      string
 	Alg     Algorithm
@@ -54,19 +57,25 @@ func (k SigningKey) Public() (PublicKey, error) {
 	if k.ID != id {
 		return PublicKey{}, fmt.Errorf("%w: key ID is not the RFC 7638 thumbprint", ErrInvalidKey)
 	}
-	return PublicKey{ID: id, Alg: ES256, key: pub}, nil
+	return PublicKey{id: id, alg: ES256, key: pub}, nil
 }
 
-// p256Public returns pub as a P-256 ECDSA key whose point is on the curve.
+// p256Public returns a copy of pub, which must be a P-256 ECDSA key whose
+// point is on the curve. The copy never aliases the signer's own key.
 func p256Public(pub crypto.PublicKey) (*ecdsa.PublicKey, error) {
 	ec, ok := pub.(*ecdsa.PublicKey)
 	if !ok || ec == nil || ec.Curve != elliptic.P256() {
 		return nil, fmt.Errorf("%w: not an ECDSA P-256 key", ErrInvalidKey)
 	}
-	if _, err := ec.ECDH(); err != nil {
+	point, err := ec.Bytes()
+	if err != nil {
 		return nil, fmt.Errorf("%w: invalid P-256 point", ErrInvalidKey)
 	}
-	return ec, nil
+	cp, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid P-256 point", ErrInvalidKey)
+	}
+	return cp, nil
 }
 
 // thumbprint is the RFC 7638 SHA-256 JWK thumbprint, unpadded base64url.
@@ -112,15 +121,11 @@ func ParseES256PrivateKeysPEM(data []byte) ([]SigningKey, error) {
 	var keys []SigningKey
 	seen := map[string]bool{}
 	for rest := bytes.TrimSpace(data); len(rest) > 0; rest = bytes.TrimSpace(rest) {
-		// pem.Decode skips anything before a BEGIN line; refuse it instead.
-		if !bytes.HasPrefix(rest, []byte("-----BEGIN ")) {
-			return nil, fmt.Errorf("%w: data outside PEM blocks", ErrInvalidKey)
+		block, next, err := decodeOneBlock(rest)
+		if err != nil {
+			return nil, err
 		}
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			return nil, fmt.Errorf("%w: malformed PEM block", ErrInvalidKey)
-		}
+		rest = next
 		key, err := parsePKCS8Block(block)
 		if err != nil {
 			return nil, fmt.Errorf("%w: block %d: %w", ErrInvalidKey, len(keys)+1, err)
@@ -135,6 +140,21 @@ func ParseES256PrivateKeysPEM(data []byte) ([]SigningKey, error) {
 		return nil, fmt.Errorf("%w: no PEM block", ErrInvalidKey)
 	}
 	return keys, nil
+}
+
+// decodeOneBlock decodes the PEM block at the start of data. pem.Decode
+// silently skips text before a BEGIN line and malformed blocks; both are
+// refused: the consumed text must start with, and hold, exactly one BEGIN.
+func decodeOneBlock(data []byte) (*pem.Block, []byte, error) {
+	begin := []byte("-----BEGIN ")
+	if !bytes.HasPrefix(data, begin) {
+		return nil, nil, fmt.Errorf("%w: data outside PEM blocks", ErrInvalidKey)
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || bytes.Count(data[:len(data)-len(rest)], begin) != 1 {
+		return nil, nil, fmt.Errorf("%w: malformed PEM block", ErrInvalidKey)
+	}
+	return block, rest, nil
 }
 
 func parsePKCS8Block(block *pem.Block) (SigningKey, error) {
@@ -195,10 +215,10 @@ func NewKeySet(ctx context.Context, src KeySource) (*KeySet, error) {
 func checkUniqueIDs(keys []PublicKey) error {
 	seen := make(map[string]bool, len(keys))
 	for _, k := range keys {
-		if seen[k.ID] {
+		if seen[k.id] {
 			return fmt.Errorf("%w: repeated key ID", ErrInvalidKey)
 		}
-		seen[k.ID] = true
+		seen[k.id] = true
 	}
 	return nil
 }
@@ -209,7 +229,7 @@ func checkUniqueIDs(keys []PublicKey) error {
 func (k *KeySet) Sign(claims any) (string, error) {
 	payload, err := json.Marshal(claims)
 	if err != nil {
-		return "", fmt.Errorf("crypto: marshaling claims: %w", err)
+		return "", ErrInvalidClaims // json errors can quote claim content
 	}
 	jws, err := k.active.Sign(payload)
 	if err != nil {
@@ -235,7 +255,7 @@ func (k *KeySet) PublicKeys() []PublicKey {
 func (k *KeySet) PublicJWKS() ([]byte, error) {
 	set := jose.JSONWebKeySet{Keys: make([]jose.JSONWebKey, 0, len(k.public))}
 	for _, p := range k.public {
-		jwk := jose.JSONWebKey{Key: p.key, KeyID: p.ID, Algorithm: string(p.Alg), Use: "sig"}
+		jwk := jose.JSONWebKey{Key: p.key, KeyID: p.id, Algorithm: string(p.alg), Use: "sig"}
 		if !jwk.IsPublic() {
 			return nil, fmt.Errorf("%w: private key in public set", ErrInvalidKey)
 		}
@@ -246,4 +266,23 @@ func (k *KeySet) PublicJWKS() ([]byte, error) {
 		return nil, fmt.Errorf("crypto: marshaling JWKS: %w", err)
 	}
 	return out, nil
+}
+
+// MarshalJSON always fails: a private key is never serialized by accident.
+func (k SigningKey) MarshalJSON() ([]byte, error) { return nil, ErrKeyNotSerializable }
+
+// MarshalText always fails: a private key is never serialized by accident.
+func (k SigningKey) MarshalText() ([]byte, error) { return nil, ErrKeyNotSerializable }
+
+// String shows the ID and algorithm only.
+func (k SigningKey) String() string {
+	return fmt.Sprintf("SigningKey{ID: %s, Alg: %s, Private: REDACTED}", k.ID, k.Alg)
+}
+
+// GoString keeps %#v from printing the private key.
+func (k SigningKey) GoString() string { return k.String() }
+
+// LogValue keeps slog from printing the private key.
+func (k SigningKey) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("id", k.ID), slog.String("alg", string(k.Alg)))
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/go-jose/go-jose/v4"
@@ -36,15 +37,25 @@ var (
 	ErrUnknownKey           = errors.New("crypto: unknown key ID")
 	ErrInvalidSignature     = errors.New("crypto: invalid signature")
 	ErrInvalidKey           = errors.New("crypto: invalid key")
+	ErrInvalidDestination   = errors.New("crypto: claims destination must be a non-nil pointer")
+	ErrInvalidClaims        = errors.New("crypto: claims cannot be encoded")
+	ErrKeyNotSerializable   = errors.New("crypto: private keys are never serialized")
 )
 
 // PublicKey is a verification key. It is built only by this package (from a
-// SigningKey or a KeySet), so callers never handle crypto/* types.
+// SigningKey or a KeySet), so callers never handle crypto/* types and cannot
+// pair a key with an ID that is not its thumbprint.
 type PublicKey struct {
-	ID  string
-	Alg Algorithm
+	id  string
+	alg Algorithm
 	key *ecdsa.PublicKey
 }
+
+// ID returns the key ID, the RFC 7638 thumbprint of the key.
+func (p PublicKey) ID() string { return p.id }
+
+// Alg returns the algorithm the key verifies.
+func (p PublicKey) Alg() Algorithm { return p.alg }
 
 // Verifier verifies compact JWS tokens against a fixed set of keys and an
 // explicit algorithm allowlist. It is safe for concurrent use.
@@ -93,13 +104,13 @@ func (v *Verifier) setKeys(keys []PublicKey) error {
 		return err
 	}
 	for _, k := range keys {
-		if k.key == nil || k.ID == "" {
+		if k.key == nil || k.id == "" {
 			return fmt.Errorf("%w: incomplete public key", ErrInvalidKey)
 		}
-		if !v.allowed[k.Alg] {
+		if !v.allowed[k.alg] {
 			return fmt.Errorf("%w: key algorithm not allowed", ErrUnsupportedAlgorithm)
 		}
-		v.keys[k.ID] = k
+		v.keys[k.id] = k
 	}
 	return nil
 }
@@ -113,16 +124,23 @@ type header struct {
 	Typ string `json:"typ"`
 }
 
-// Verify checks token and decodes its claims into dst, which is written only
-// on success. In order: length at most MaxTokenBytes (before any parsing);
-// three segments of canonical unpadded base64url; a header of only alg, kid
-// and typ; alg in the allowlist; kid naming a known key of that algorithm;
-// the signature; claims decoded strictly (duplicate or unknown members
-// refused, see jsonx). Keys in the header are never used.
+// Verify checks token and decodes its claims into dst, a non-nil pointer
+// (ErrInvalidDestination otherwise) written only on success. In order: length
+// at most MaxTokenBytes (before any parsing); three segments of canonical
+// unpadded base64url; a header of only alg, kid and typ; alg in the
+// allowlist; kid naming a known key of that algorithm; the signature; claims
+// decoded through jsonx: duplicate keys (also case-folded duplicates of struct
+// fields), keys that would bind a field only case-insensitively, invalid
+// UTF-8, excessive depth and trailing data are refused, and unknown claims are
+// ignored (RFC 7519, section 4). Keys in the header are never used.
 //
-// ECDSA signatures are malleable: (r, n-s) verifies like (r, s). Identify
-// tokens by a claim (jti), never by their bytes.
+// ECDSA signatures are malleable: (r, n-s) verifies like (r, s), so two
+// distinct strings verify for every issued token. Identify tokens by a claim
+// (jti), never by their bytes or a hash of them.
 func (v *Verifier) Verify(token string, dst any) error {
+	if rv := reflect.ValueOf(dst); rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return ErrInvalidDestination
+	}
 	if len(token) > MaxTokenBytes {
 		return fmt.Errorf("%w: maximum %d bytes", ErrTokenTooLarge, MaxTokenBytes)
 	}
@@ -130,12 +148,9 @@ func (v *Verifier) Verify(token string, dst any) error {
 	if err != nil {
 		return err
 	}
-	if !v.allowed[Algorithm(h.Alg)] {
-		return ErrUnsupportedAlgorithm
-	}
-	key, ok := v.keys[h.Kid]
-	if !ok || key.Alg != Algorithm(h.Alg) {
-		return ErrUnknownKey
+	key, err := v.keyFor(h)
+	if err != nil {
+		return err
 	}
 	jws, err := jose.ParseSignedCompact(token, v.algs)
 	if err != nil {
@@ -145,11 +160,24 @@ func (v *Verifier) Verify(token string, dst any) error {
 	if err != nil {
 		return ErrInvalidSignature
 	}
-	lim := jsonx.Limits{MaxBytes: MaxTokenBytes, MaxDepth: maxClaimsDepth}
+	lim := jsonx.Limits{MaxBytes: MaxTokenBytes, MaxDepth: maxClaimsDepth, AllowUnknownFields: true}
 	if err := jsonx.DecodeStrict(bytes.NewReader(payload), dst, lim); err != nil {
 		return fmt.Errorf("%w: claims", ErrMalformedToken)
 	}
 	return nil
+}
+
+// keyFor returns the key that must have signed a token with header h: its
+// alg must be allowed and its kid must name a known key of that algorithm.
+func (v *Verifier) keyFor(h header) (PublicKey, error) {
+	if !v.allowed[Algorithm(h.Alg)] {
+		return PublicKey{}, ErrUnsupportedAlgorithm
+	}
+	key, ok := v.keys[h.Kid]
+	if !ok || key.alg != Algorithm(h.Alg) {
+		return PublicKey{}, ErrUnknownKey
+	}
+	return key, nil
 }
 
 // parseCompact checks the compact serialization (RFC 7515, section 7.1) and
