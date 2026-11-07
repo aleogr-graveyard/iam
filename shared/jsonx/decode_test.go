@@ -164,8 +164,8 @@ func TestDecodeStrictCaseSmuggling(t *testing.T) {
 		{"kelvin collides", `{"k":1,"` + kelvin + `":2}`, jsonx.ErrDuplicateKey},
 		{"long s only", `{"` + longS + `":1}`, jsonx.ErrUnknownField},
 		{"long s collides", `{"s":1,"` + longS + `":2}`, jsonx.ErrDuplicateKey},
-		{"escaped key duplicates", `{"a":1,"a":2}`, jsonx.ErrDuplicateKey},
-		{"escaped key accepted", `{"a":1}`, nil},
+		{"escaped key duplicates", `{"a":1,"\u0061":2}`, jsonx.ErrDuplicateKey},
+		{"escaped key accepted", `{"\u0061":1}`, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -290,4 +290,87 @@ func TestDecodeStrictLimitsAndReaders(t *testing.T) {
 			t.Fatalf("limits %+v accepted", bad)
 		}
 	}
+}
+
+type inA struct {
+	A int `json:"a"`
+}
+
+type tagEmb struct {
+	X inA `json:"x"`
+}
+
+// outer field x shadows the embedded one.
+type outerWins struct {
+	tagEmb
+	X struct {
+		B int `json:"b"`
+	} `json:"x"`
+}
+
+type taggedEmb struct {
+	Name inA `json:"name"`
+}
+
+// both fields are tagged "name" at the same depth: ambiguous.
+type eqDepth struct {
+	taggedEmb
+	untaggedName //nolint:govet // duplicate tag is the point of this fixture
+}
+
+type untaggedName struct {
+	Name struct {
+		Z int `json:"z"`
+	} `json:"name"`
+}
+
+type ambiguousA struct {
+	V inA `json:"v"`
+}
+type ambiguousB struct {
+	V inA `json:"v"`
+}
+type ambiguous struct {
+	ambiguousA
+	ambiguousB     //nolint:govet // duplicate tag is the point of this fixture
+	Other      int `json:"other"`
+}
+
+type taggedBeatsUntagged struct {
+	pa
+	pb
+}
+type pa struct {
+	Name inA
+}
+type pb struct {
+	N inA `json:"Name"`
+}
+
+func TestDecodeStrictEmbeddedDominance(t *testing.T) {
+	check := func(t *testing.T, v any, in string, want error) {
+		t.Helper()
+		if err := jsonx.DecodeStrict(strings.NewReader(in), v, jsonx.DefaultLimits); !errors.Is(err, want) {
+			t.Fatalf("%s: want %v, got %v", in, want, err)
+		}
+	}
+	t.Run("outer wins and is strict", func(t *testing.T) {
+		check(t, &outerWins{}, `{"x":{"b":1}}`, nil)
+		check(t, &outerWins{}, `{"x":{"B":1}}`, jsonx.ErrUnknownField)
+		check(t, &outerWins{}, `{"x":{"b":1,"B":2}}`, jsonx.ErrDuplicateKey)
+		check(t, &outerWins{}, `{"x":{"a":1}}`, jsonx.ErrUnknownField)
+	})
+	t.Run("embedded loses to outer even with case smuggling", func(t *testing.T) {
+		check(t, &outerWins{}, `{"x":{"a":1,"A":2}}`, jsonx.ErrUnknownField)
+	})
+	t.Run("tagged beats untagged at equal depth", func(t *testing.T) {
+		check(t, &taggedBeatsUntagged{}, `{"Name":{"a":1}}`, nil)
+		check(t, &taggedBeatsUntagged{}, `{"Name":{"A":1}}`, jsonx.ErrUnknownField)
+		check(t, &taggedBeatsUntagged{}, `{"Name":{"a":1,"A":2}}`, jsonx.ErrDuplicateKey)
+	})
+	t.Run("ambiguous name is dropped", func(t *testing.T) {
+		check(t, &ambiguous{}, `{"v":{"a":1}}`, jsonx.ErrUnknownField)
+		check(t, &ambiguous{}, `{"other":1}`, nil)
+		check(t, &eqDepth{}, `{"name":{"a":1}}`, jsonx.ErrUnknownField)
+	})
 }
