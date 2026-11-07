@@ -73,7 +73,7 @@ func parseBaseURL(s string) (*url.URL, bool) {
 	}
 	// "?" and "#" cover empty queries and fragments; the round trip rejects
 	// non-canonical spellings such as an upper-case scheme.
-	if strings.ContainsAny(s, "?#") || u.String() != s {
+	if strings.ContainsAny(s, "?#") || strings.HasSuffix(u.Host, ":") || u.String() != s {
 		return nil, false
 	}
 	if u.User != nil || strings.HasSuffix(u.Path, "/") {

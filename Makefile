@@ -76,7 +76,8 @@ proto-check:
 
 # Regenerates the configuration reference from the struct tags of shared/config.
 config-doc:
-	go run ./shared/config/cmd/configdoc > docs/config-reference.md.tmp && mv docs/config-reference.md.tmp docs/config-reference.md
+	go run ./shared/config/cmd/configdoc > docs/config-reference.md.tmp && mv docs/config-reference.md.tmp docs/config-reference.md \
+		|| { rm -f docs/config-reference.md.tmp; exit 1; }
 
 # Fails when the committed reference differs from what the tags produce.
 config-doc-check:

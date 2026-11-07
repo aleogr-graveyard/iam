@@ -104,8 +104,17 @@ func TestLoad_UnknownKeyNotEchoed(t *testing.T) {
 	}
 }
 
+func TestLoad_ParseErrorsNeverEchoValues(t *testing.T) {
+	for _, name := range []string{"IAM_SHUTDOWN_TIMEOUT", "IAM_ARGON2_MEMORY_KIB", "IAM_ARGON2_PARALLELISM"} {
+		_, _, err := Load(env(prod(map[string]string{name: "s3cr3t-token"})), noFile)
+		if err == nil || !strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
 func TestLoad_MalformedPublicBaseURL(t *testing.T) {
-	for _, u := range []string{"https://x?", "https://x#", "https://:443", "https://x/?a=b", "https://x/", "HTTPS://x", "https://u:p@x", "ftp://x", "https://x/a#f"} {
+	for _, u := range []string{"https://x?", "https://x#", "https://:443", "https://x/?a=b", "https://x/", "HTTPS://x", "https://u:p@x", "ftp://x", "https://x/a#f", "https://x:", "https://x:/a"} {
 		_, _, err := Load(env(prod(map[string]string{"IAM_PUBLIC_BASE_URL": u})), noFile)
 		if err == nil {
 			t.Errorf("%q accepted", u)
@@ -232,7 +241,23 @@ func TestDocument_ListsEveryField(t *testing.T) {
 	}
 }
 
+// messageVocabulary collects the fixed text Load can produce, by loading a
+// configuration that trips every rule, plus the generated reference.
+func messageVocabulary() string {
+	_, _, err := Load(env(map[string]string{
+		"IAM_ENVIRONMENT": "bogus", "IAM_PUBLIC_BASE_URL": "http://x/", "IAM_DATABASE_URL": "zz", "IAM_CURSOR_KEY": "!",
+		"IAM_SHUTDOWN_TIMEOUT": "zz", "IAM_ARGON2_MEMORY_KIB": "zz", "IAM_ARGON2_ITERATIONS": "0", "IAM_DATABASE_APP_ROLE": " ",
+		"IAM_CONFIG_FILE": "f",
+	}), func(string) ([]byte, error) { return []byte(`{"x": 1, "http_addr": 1, "http_addr": 2}`), nil })
+	var doc bytes.Buffer
+	_ = Document(&doc)
+	return err.Error() + doc.String()
+}
+
 func FuzzLoad(f *testing.F) {
+	vocab := messageVocabulary()
+	f.Add("https://iam.example.com", goodKey, "postgres://u:hunter2secret@h")
+	f.Add("https://user:pw1234@x", goodKey, "postgres://u:hunter2secret@h/")
 	for _, s := range []string{"", "10s", "abc", "0s", "-1h", "9999999999999h"} {
 		f.Add(s, s, s)
 	}
@@ -244,10 +269,9 @@ func FuzzLoad(f *testing.F) {
 		}
 		cfg, _, err := Load(env(m), noFile)
 		if err != nil {
-			// Fixed words of the messages are not leaks.
-			msg := strings.NewReplacer("postgres", "", "base64", "", "http", "", "https", "").Replace(err.Error())
+			msg := err.Error()
 			for _, v := range m {
-				if len(v) >= 4 && strings.Contains(msg, v) {
+				if len(v) >= 4 && !strings.Contains(vocab, v) && strings.Contains(msg, v) {
 					t.Fatalf("a field value was echoed in the error")
 				}
 			}
