@@ -14,7 +14,7 @@ CYCLONEDX     := $(call gotool,cyclonedx-gomod)
 OSV_SCANNER   := $(call gotool,osv-scanner)
 BENCHSTAT     := $(call gotool,benchstat)
 
-.PHONY: dev dev-down dev-reset test e2e build lint lint-rules workspace-check vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench
+.PHONY: dev dev-down dev-reset test e2e build lint lint-rules workspace-check vuln secrets licenses actions proto proto-check image sbom scan repro check fuzz bench dev-check
 
 # Every module listed in go.work is self-contained, so each is tested from its own
 # directory. The e2e module is excluded on purpose: it needs built binaries and its
@@ -114,6 +114,10 @@ dev:
 # `down` never uses the password; the placeholder only satisfies compose
 # interpolation, so teardown works even when .env.local is missing.
 COMPOSE_DOWN := POSTGRES_PASSWORD=unused docker compose $(if $(wildcard .env.local),--env-file .env.local,)
+
+# Exercises make dev end to end; needs Docker (runs in CI).
+dev-check:
+	scripts/check-dev-env.sh
 
 dev-down:
 	$(COMPOSE_DOWN) down
