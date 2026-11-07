@@ -15,3 +15,11 @@
 /docs/adr/** @aleogr
 /docs/brief.md @aleogr
 /CLAUDE.md @aleogr
+/.ko.yaml @aleogr
+/go.work @aleogr
+/go.mod @aleogr
+/go.sum @aleogr
+/buf.yaml @aleogr
+/buf.gen.yaml @aleogr
+/api/** @aleogr
+/compose.yaml @aleogr

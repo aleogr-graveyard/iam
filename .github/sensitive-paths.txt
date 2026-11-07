@@ -14,3 +14,11 @@ scripts/**
 docs/adr/**
 docs/brief.md
 CLAUDE.md
+.ko.yaml
+go.work
+go.mod
+go.sum
+buf.yaml
+buf.gen.yaml
+api/**
+compose.yaml

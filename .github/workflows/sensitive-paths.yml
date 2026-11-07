@@ -1,23 +1,18 @@
 name: Sensitive paths
 
-# pull_request, never pull_request_target: PR code must not run with a privileged
-# token. Fork PRs get a read-only token, so the guard only acts on same-repo PRs.
-#
-# With pull_request this workflow file itself is read from the PR, so a PR can
-# edit or remove the guard; only the ruleset (required checks, owner merges for
-# sensitive paths) protects it, and this file is itself a sensitive path. What
-# the BASE ref does supply is the matcher source, the patterns file and the Go
-# toolchain version, so a PR that leaves this file alone cannot change how its
-# paths are judged. Consequence: the very first PR that introduces the guard
-# fails closed, because the base has no tool yet.
+# pull_request_target, so the workflow, the matcher, the patterns file and the
+# Go toolchain all come from the BASE ref: a pull request cannot edit or remove
+# the guard that judges it. This is safe only because no code from the pull
+# request is checked out or executed here: the changed files come from the API
+# and everything that runs is base code. Never add a checkout of the PR head.
 #
 # Fails closed: any error disables auto-merge (if enabled), is written to the
 # step summary, and fails the job. The job is not a required check.
 #
 # Known race: an already-green PR can merge before this job runs. Only the
-# required checks in the ruleset (owner step) close that window.
+# required checks in the ruleset close that window.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, auto_merge_enabled]
 
 permissions: {}
@@ -33,16 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: base/go.mod
-          cache-dependency-path: "**/go.sum"
+          cache-dependency-path: "base/**/go.sum"
       # Runs even when an earlier step failed (e.g. setup-go cannot read
       # base/go.mod because the base ref predates the guard): the script then
       # fails closed and disables auto-merge instead of being skipped.
