@@ -139,7 +139,7 @@ Levantadas nas revisões do marco 0; entram nos itens indicados.
 | Teste de que URL inválida não vaza credencial | SHARED-012 |
 | Reprodutibilidade provada no build do `ko` (com ldflags), não só no `go build` | antes do primeiro release |
 | Advisories nas ferramentas de `tools/*` sem relatório (só o módulo distribuído é barrado) | OPS-011, relatório noturno não bloqueante |
-| Dono rodar `make dev` uma vez (Docker não existia no ambiente de desenvolvimento) | antes de fechar o marco 0 |
+| `make dev` exercitado de ponta a ponta no CI (job `Dev env`); torná-lo check obrigatório | ruleset, junto com a próxima mudança de checks |
 | Dono decidir: ampliar `.github/sensitive-paths.txt` (`.ko.yaml`, `go.work`, `buf.*`, `api/**`, `go.mod`/`go.sum`) e mover o guarda para `pull_request_target` | decisão do dono, sem item no roadmap |
 
 ## Camadas seguintes (ordem proposta, detalhadas quando o marco anterior fechar)

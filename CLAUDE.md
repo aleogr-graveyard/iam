@@ -12,6 +12,13 @@ the plan of record is `docs/roadmap.md`; the original brief is `docs/brief.md`.
   single command, wait for the owner to run it and show the output, and only
   then give the next one. Never hand over a batch of commands, even when they
   are independent. This holds in every session and every repository.
+- **Claude Code is the only developer.** The owner never installs an
+  environment, runs code, tests or tools, or edits code. Every development,
+  test and environment check is done by Claude Code; what cannot run in the
+  session runs in CI. The owner only performs account-level actions that no
+  agent can (approvals, merges, console settings, secrets).
+- **Every decision asked of the owner comes with a recommendation**, without
+  exception: the options, the recommended one first, and a one-line reason.
 - Never ask for secrets in chat. Never commit them: this repository is
   **public** and its whole history will stay public.
 
