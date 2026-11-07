@@ -19,6 +19,8 @@ the plan of record is `docs/roadmap.md`; the original brief is `docs/brief.md`.
   agent can (approvals, merges, console settings, secrets).
 - **Every decision asked of the owner comes with a recommendation**, without
   exception: the options, the recommended one first, and a one-line reason.
+- **Claude Code watches every pull request it opens** (CI, reviews, merge or
+  close) and acts on each change without the owner having to report it.
 - Never ask for secrets in chat. Never commit them: this repository is
   **public** and its whole history will stay public.
 
