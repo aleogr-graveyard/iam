@@ -95,7 +95,9 @@ func (h *PasswordHasher) Hash(ctx context.Context, password []byte) (string, err
 	if err != nil {
 		return "", err
 	}
-	return encodePHC(h.params, salt, key), nil
+	phc := encodePHC(h.params, salt, key)
+	clear(key)
+	return phc, nil
 }
 
 // Verify reports whether password matches the PHC string phc and, when it
@@ -168,6 +170,8 @@ func derive(password, salt []byte, p Argon2Params) []byte {
 
 var b64 = base64.RawStdEncoding.Strict()
 
+const b64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
 func encodePHC(p Argon2Params, salt, key []byte) string {
 	return fmt.Sprintf("$%s$%s$m=%d,t=%d,p=%d$%s$%s", phcAlgorithm, phcVersion,
 		p.MemoryKiB, p.Iterations, p.Parallelism, b64.EncodeToString(salt), b64.EncodeToString(key))
@@ -235,12 +239,15 @@ func parseParam(s, prefix string) (uint64, error) {
 	return strconv.ParseUint(v, 10, 64)
 }
 
+// decodeExact decodes exactly n bytes of unpadded standard base64. The
+// alphabet is checked first because the decoder silently skips CR and LF,
+// which would otherwise let a shorter (even empty) salt or key through.
 func decodeExact(s string, n int) ([]byte, error) {
-	if len(s) != b64.EncodedLen(n) {
-		return nil, fmt.Errorf("%w: salt or hash length", ErrMalformedHash)
+	if len(s) != b64.EncodedLen(n) || strings.Trim(s, b64Alphabet) != "" {
+		return nil, fmt.Errorf("%w: salt or hash encoding", ErrMalformedHash)
 	}
 	b, err := b64.DecodeString(s)
-	if err != nil {
+	if err != nil || len(b) != n {
 		return nil, fmt.Errorf("%w: salt or hash encoding", ErrMalformedHash)
 	}
 	return b, nil

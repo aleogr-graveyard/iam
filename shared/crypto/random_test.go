@@ -19,7 +19,10 @@ func TestRandomBytes(t *testing.T) {
 	if bytes.Equal(a, b) {
 		t.Fatal("two random draws are equal")
 	}
-	for _, n := range []int{0, -1} {
+	if b, err := RandomBytes(MaxRandomBytes); err != nil || len(b) != MaxRandomBytes {
+		t.Fatalf("RandomBytes(MaxRandomBytes) = %d bytes, %v", len(b), err)
+	}
+	for _, n := range []int{0, -1, MaxRandomBytes + 1} {
 		if _, err := RandomBytes(n); !errors.Is(err, ErrInvalidLength) {
 			t.Errorf("RandomBytes(%d) err = %v, want ErrInvalidLength", n, err)
 		}
@@ -48,7 +51,7 @@ func TestRandomToken_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestRandomToken_RejectsWeakLength(t *testing.T) {
-	for _, n := range []int{-1, 0, 15} {
+	for _, n := range []int{-1, 0, 15, MaxRandomBytes + 1} {
 		if _, err := RandomToken(n); !errors.Is(err, ErrInvalidLength) {
 			t.Errorf("RandomToken(%d) err = %v, want ErrInvalidLength", n, err)
 		}

@@ -19,8 +19,9 @@ type System struct{}
 // Now returns the current local time, with its monotonic reading.
 func (System) Now() time.Time { return time.Now() }
 
-// Fixed is a clock for tests: it returns T until advanced. Use it through a
-// pointer; it is safe for concurrent use.
+// Fixed is a clock for tests: it returns T until moved. Set T only when
+// constructing it (&Fixed{T: t}); afterwards read and change the time only
+// through Now, Advance and Set, which are safe for concurrent use.
 type Fixed struct {
 	T  time.Time
 	mu sync.Mutex
@@ -38,4 +39,11 @@ func (f *Fixed) Advance(d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.T = f.T.Add(d)
+}
+
+// Set moves the clock to t.
+func (f *Fixed) Set(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.T = t
 }

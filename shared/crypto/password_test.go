@@ -110,12 +110,35 @@ func TestPasswordHasher_ParameterCeiling(t *testing.T) {
 	}
 }
 
+// nilSaltKey is the key of "pw" derived over an empty salt with testParams.
+var nilSaltKey = base64.RawStdEncoding.EncodeToString(argon2.IDKey([]byte("pw"), nil, 1, 64, 1, 32))
+
+func TestParseParams_Boundaries(t *testing.T) {
+	accept := map[string]Argon2Params{
+		"m=4294967295,t=1,p=1": {MemoryKiB: 4294967295, Iterations: 1, Parallelism: 1},
+		"m=2048,t=1,p=255":     {MemoryKiB: 2048, Iterations: 1, Parallelism: 255},
+		"m=8,t=4294967295,p=1": {MemoryKiB: 8, Iterations: 4294967295, Parallelism: 1},
+	}
+	for in, want := range accept {
+		if got, err := parseParams(in); err != nil || got != want {
+			t.Errorf("parseParams(%q) = %+v, %v; want %+v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"m=4294967296,t=1,p=1", "m=4096,t=1,p=256", "m=64,t=0,p=1", "m=64,t=4294967296,p=1"} {
+		if _, err := parseParams(in); !errors.Is(err, ErrMalformedHash) {
+			t.Errorf("parseParams(%q) err = %v, want ErrMalformedHash", in, err)
+		}
+	}
+}
+
 func TestPasswordHasher_RejectsMalformedPHC(t *testing.T) {
 	h := newTestHasher(t)
 	valid := mustHash(t, h, "pw")
 	parts := strings.Split(valid, "$")
 	salt, key := parts[4], parts[5]
 	with := func(head string) string { return head + "$" + salt + "$" + key }
+	keyRaw, _ := base64.RawStdEncoding.DecodeString(key)
+	shortKey := base64.RawStdEncoding.EncodeToString(keyRaw[:29]) // 39 chars + 4 CR/LF = 43
 	cases := map[string]string{
 		"empty":            "",
 		"argon2i":          with("$argon2i$v=19$m=64,t=1,p=1"),
@@ -149,6 +172,11 @@ func TestPasswordHasher_RejectsMalformedPHC(t *testing.T) {
 		"short hash":       "$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + "AAAAAAAAAAAAAAAAAAAAAA",
 		"long hash":        "$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + strings.Repeat("A", 128),
 		"oversized":        valid + strings.Repeat("A", 4096),
+		// Regressions: the base64 decoder skips CR and LF, so length checks alone
+		// let a shorter (or empty) salt or key through.
+		"salt with LF":      "$argon2id$v=19$m=64,t=1,p=1$" + salt[:20] + "\n\n" + "$" + key,
+		"salt all newlines": "$argon2id$v=19$m=64,t=1,p=1$" + strings.Repeat("\n", 22) + "$" + nilSaltKey,
+		"hash with CRLF":    "$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + shortKey + "\r\n\r\n",
 	}
 	for name, phc := range cases {
 		t.Run(name, func(t *testing.T) {

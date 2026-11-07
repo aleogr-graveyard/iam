@@ -44,3 +44,11 @@ func TestSystem_Now(t *testing.T) {
 		t.Fatalf("system clock not monotonic: %v then %v", a, b)
 	}
 }
+
+func TestFixed_Set(t *testing.T) {
+	c := &Fixed{T: time.Unix(100, 0)}
+	c.Set(time.Unix(5, 0))
+	if got := c.Now(); !got.Equal(time.Unix(5, 0)) {
+		t.Fatalf("after Set: %v", got)
+	}
+}
