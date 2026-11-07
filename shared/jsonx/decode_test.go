@@ -2,6 +2,7 @@ package jsonx_test
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -128,5 +129,165 @@ func TestDecodeStrictDepthAndSiblings(t *testing.T) {
 				t.Fatalf("want %v, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+type lower struct {
+	A int `json:"a"`
+	K int `json:"k"`
+	S int `json:"s"`
+}
+
+type embedded struct {
+	Lower lower   `json:"l"`
+	List  []lower `json:"list"`
+	Skip  int     `json:"-"`
+	Plain int
+	Opt   int `json:"opt,omitempty"`
+	base
+}
+
+type base struct {
+	Inherited int `json:"inherited"`
+}
+
+func TestDecodeStrictCaseSmuggling(t *testing.T) {
+	const kelvin, longS = "K", "ſ"
+	tests := []struct {
+		name string
+		in   string
+		want error
+	}{
+		{"exact duplicate pair", `{"a":1,"A":2}`, jsonx.ErrDuplicateKey},
+		{"case only key", `{"A":1}`, jsonx.ErrUnknownField},
+		{"kelvin only", `{"` + kelvin + `":1}`, jsonx.ErrUnknownField},
+		{"kelvin collides", `{"k":1,"` + kelvin + `":2}`, jsonx.ErrDuplicateKey},
+		{"long s only", `{"` + longS + `":1}`, jsonx.ErrUnknownField},
+		{"long s collides", `{"s":1,"` + longS + `":2}`, jsonx.ErrDuplicateKey},
+		{"escaped key duplicates", `{"a":1,"a":2}`, jsonx.ErrDuplicateKey},
+		{"escaped key accepted", `{"a":1}`, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got lower
+			err := jsonx.DecodeStrict(strings.NewReader(tc.in), &got, jsonx.DefaultLimits)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %v", tc.want, err)
+			}
+			if err != nil && got != (lower{}) {
+				t.Fatalf("value not zero: %+v", got)
+			}
+		})
+	}
+}
+
+func TestDecodeStrictNestedTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want error
+	}{
+		{"valid", `{"l":{"a":1},"list":[{"a":1},{"a":2}],"Plain":3,"opt":4,"inherited":5}`, nil},
+		{"nested case", `{"l":{"A":1}}`, jsonx.ErrUnknownField},
+		{"nested dup case", `{"l":{"a":1,"A":2}}`, jsonx.ErrDuplicateKey},
+		{"slice element case", `{"list":[{"a":1},{"A":2}]}`, jsonx.ErrUnknownField},
+		{"slice element dup", `{"list":[{"a":1,"a":2}]}`, jsonx.ErrDuplicateKey},
+		{"outer case", `{"L":{}}`, jsonx.ErrUnknownField},
+		{"ignored field name", `{"Skip":1}`, jsonx.ErrUnknownField},
+		{"untagged field exact", `{"plain":1}`, jsonx.ErrUnknownField},
+		{"embedded promoted", `{"inherited":1}`, nil},
+		{"embedded promoted case", `{"Inherited":1}`, jsonx.ErrUnknownField},
+		{"unknown nested", `{"l":{"zzz":1}}`, jsonx.ErrUnknownField},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got embedded
+			err := jsonx.DecodeStrict(strings.NewReader(tc.in), &got, jsonx.DefaultLimits)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestDecodeStrictMapAndAnyKeepCaseDistinctKeys(t *testing.T) {
+	var m map[string]int
+	if err := jsonx.DecodeStrict(strings.NewReader(`{"a":1,"A":2}`), &m, jsonx.DefaultLimits); err != nil {
+		t.Fatal(err)
+	}
+	if m["a"] != 1 || m["A"] != 2 {
+		t.Fatalf("unexpected map %v", m)
+	}
+	var a any
+	if err := jsonx.DecodeStrict(strings.NewReader(`{"a":1,"A":2}`), &a, jsonx.DefaultLimits); err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonx.DecodeStrict(strings.NewReader(`{"a":1,"a":2}`), &m, jsonx.DefaultLimits); !errors.Is(err, jsonx.ErrDuplicateKey) {
+		t.Fatalf("want ErrDuplicateKey, got %v", err)
+	}
+}
+
+func TestDecodeStrictInvalidEncoding(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{"invalid utf-8", "{\"s\":\"\xff\"}"},
+		{"lone high surrogate", `{"s":"\ud800"}`},
+		{"high surrogate then text", `{"s":"\ud800x"}`},
+		{"high surrogate then non-low", `{"s":"\ud800A"}`},
+		{"lone low surrogate", `{"s":"\udc00"}`},
+		{"low then high", `{"s":"\udc00\ud800"}`},
+		{"lone surrogate in key", `{"\ud800":1}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var v any
+			if err := jsonx.DecodeStrict(strings.NewReader(tc.in), &v, jsonx.DefaultLimits); !errors.Is(err, jsonx.ErrInvalidJSON) {
+				t.Fatalf("want ErrInvalidJSON, got %v", err)
+			}
+		})
+	}
+	var v any
+	ok := `{"s":"😀 \\ud800 \\\\"}`
+	if err := jsonx.DecodeStrict(strings.NewReader(ok), &v, jsonx.DefaultLimits); err != nil {
+		t.Fatalf("valid pair/escaped backslash rejected: %v", err)
+	}
+}
+
+type endless struct{}
+
+func (endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = ' '
+	}
+	return len(p), nil
+}
+
+type failing struct{}
+
+func (failing) Read([]byte) (int, error) { return 0, errors.New("disk secret-path") }
+
+func TestDecodeStrictLimitsAndReaders(t *testing.T) {
+	lim := jsonx.Limits{MaxBytes: 10, MaxDepth: 4}
+	var v any
+	exact := "{}" + strings.Repeat(" ", 8)
+	if err := jsonx.DecodeStrict(strings.NewReader(exact), &v, lim); err != nil {
+		t.Fatalf("exactly MaxBytes: %v", err)
+	}
+	if err := jsonx.DecodeStrict(strings.NewReader(exact+" "), &v, lim); !errors.Is(err, jsonx.ErrTooLarge) {
+		t.Fatalf("MaxBytes+1: %v", err)
+	}
+	if err := jsonx.DecodeStrict(endless{}, &v, lim); !errors.Is(err, jsonx.ErrTooLarge) {
+		t.Fatalf("endless: %v", err)
+	}
+	err := jsonx.DecodeStrict(failing{}, &v, lim)
+	if !errors.Is(err, jsonx.ErrRead) || strings.Contains(err.Error(), "secret-path") {
+		t.Fatalf("read error: %v", err)
+	}
+	for _, bad := range []jsonx.Limits{{MaxBytes: -1, MaxDepth: 1}, {MaxBytes: 1, MaxDepth: 0}, {MaxBytes: math.MaxInt64, MaxDepth: 1}} {
+		if err := jsonx.DecodeStrict(strings.NewReader(`{}`), &v, bad); err == nil {
+			t.Fatalf("limits %+v accepted", bad)
+		}
 	}
 }
