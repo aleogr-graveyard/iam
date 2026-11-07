@@ -30,7 +30,9 @@ fi
 
 docker compose --env-file "$env_file" up -d --wait
 
+export IAM_ENVIRONMENT="development"
 export IAM_HTTP_ADDR="127.0.0.1:8080"
+export IAM_PUBLIC_BASE_URL="http://${IAM_HTTP_ADDR}"
 export IAM_DATABASE_URL="postgres://iam:${password}@127.0.0.1:5432/iam?sslmode=disable"
 echo "dev-env: server on http://${IAM_HTTP_ADDR} (database URL not shown)"
 exec go run ./cmd/iam

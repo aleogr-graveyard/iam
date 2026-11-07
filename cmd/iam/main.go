@@ -10,6 +10,7 @@ import (
 
 	"github.com/aleogr/iam/internal/database"
 	"github.com/aleogr/iam/internal/httpserver"
+	"github.com/aleogr/iam/shared/config"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -24,7 +25,8 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
-	cfg, err := loadEnv(os.Getenv)
+	cfg, findings, err := config.Load(os.Getenv, os.ReadFile)
+	logFindings(log, findings)
 	if err != nil {
 		return err
 	}
@@ -43,4 +45,19 @@ func run(log *slog.Logger) error {
 		opts = append(opts, httpserver.WithReadinessChecks(database.ReadinessCheck(pool)))
 	}
 	return httpserver.New(cfg.HTTPAddr, opts...).Run(ctx, cfg.ShutdownTimeout)
+}
+
+// logFindings logs each finding at the level of its severity. Prohibited
+// findings are also fatal, but Load reports those through its error.
+func logFindings(log *slog.Logger, findings []config.Finding) {
+	levels := map[config.Severity]slog.Level{
+		config.Info:       slog.LevelInfo,
+		config.Warning:    slog.LevelWarn,
+		config.Critical:   slog.LevelError,
+		config.Prohibited: slog.LevelError,
+	}
+	for _, f := range findings {
+		log.Log(context.Background(), levels[f.Severity], f.Message,
+			"severity", f.Severity.String(), "code", f.Code, "reference", f.Reference)
+	}
 }
