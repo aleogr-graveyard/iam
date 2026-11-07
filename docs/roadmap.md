@@ -37,6 +37,10 @@ numa organização de um tenant, recebe tokens e consulta uma permissão RBAC pe
 plataforma usa esse RBAC nos papéis administrativos; os testes de abuso da seção 11 do spec
 passam; as metas do [ADR 0011](adr/0011-latency-and-scale-targets.md) são medidas.
 
+O marco 1 é executado em quatro planos: **1A** contratos e fundação
+(`docs/superpowers/plans/2026-11-07-milestone-1a-contracts-foundation.md`), **1B** AuthZ,
+**1C** AuthN e **1D** integração e deploy no laboratório.
+
 ### Contratos (primeiro)
 
 | ID | Contrato | Status | Depende de |
