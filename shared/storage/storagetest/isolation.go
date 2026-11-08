@@ -3,6 +3,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/aleogr/iam/shared/ids"
@@ -40,30 +41,42 @@ func scopedIsolationTests() []test {
 }
 
 // testIsolationReads: rows of A are invisible to every read in B, and their
-// unique keys (slug, e-mail) do not collide with B's.
+// unique keys (slug, e-mail) do not collide with B's. It runs with an
+// unverified and a verified user, so a lookup that treats verified addresses
+// as global is caught.
 func testIsolationReads(f *fixture) {
-	a, b := f.tenant("tenant-a"), f.tenant("tenant-b")
-	o, u, app := f.org("sales"), f.user("ana@example.com"), f.confidentialApp("App")
-	f.inTenant(a, func(ctx context.Context, tx storage.Tx) error {
-		return errors.Join(tx.Organizations().Create(ctx, o), tx.Users().Create(ctx, u), tx.Applications().Create(ctx, app))
-	})
-	f.inTenant(b, func(ctx context.Context, tx storage.Tx) error {
-		_, err := tx.Organizations().Get(ctx, o.ID)
-		wantErr(f.t, "Organizations().Get in B", err, storage.ErrNotFound)
+	for i, verified := range []bool{false, true} {
+		a, b := f.tenant(fmt.Sprintf("tenant-a-%d", i)), f.tenant(fmt.Sprintf("tenant-b-%d", i))
+		o, u, app := f.org("sales"), f.user("ana@example.com"), f.confidentialApp("App")
+		u.EmailVerified = verified
+		f.inTenant(a, func(ctx context.Context, tx storage.Tx) error {
+			return errors.Join(tx.Organizations().Create(ctx, o), tx.Users().Create(ctx, u), tx.Applications().Create(ctx, app))
+		})
+		f.wantInvisible(b, o.ID, u.ID, app.ID, fmt.Sprintf("verified=%v", verified))
+		f.wantEmptyTenant(b)
+		f.inTenant(b, func(ctx context.Context, tx storage.Tx) error {
+			wantErr(f.t, "same slug in B", tx.Organizations().Create(ctx, f.org("sales")), nil)
+			wantErr(f.t, "same e-mail in B", tx.Users().Create(ctx, f.user("ana@example.com")), nil)
+			return nil
+		})
+	}
+}
+
+// wantInvisible checks that every read in tenant finds none of the rows
+// testIsolationReads created in the other tenant.
+func (f *fixture) wantInvisible(tenant ids.TenantID, o ids.OrganizationID, u ids.UserID, app ids.ApplicationID, what string) {
+	f.t.Helper()
+	f.inTenant(tenant, func(ctx context.Context, tx storage.Tx) error {
+		_, err := tx.Organizations().Get(ctx, o)
+		wantErr(f.t, what+": Organizations().Get in B", err, storage.ErrNotFound)
 		_, err = tx.Organizations().BySlug(ctx, "sales")
-		wantErr(f.t, "Organizations().BySlug in B", err, storage.ErrNotFound)
-		_, err = tx.Users().Get(ctx, u.ID)
-		wantErr(f.t, "Users().Get in B", err, storage.ErrNotFound)
+		wantErr(f.t, what+": Organizations().BySlug in B", err, storage.ErrNotFound)
+		_, err = tx.Users().Get(ctx, u)
+		wantErr(f.t, what+": Users().Get in B", err, storage.ErrNotFound)
 		_, err = tx.Users().ByEmail(ctx, "ana@example.com")
-		wantErr(f.t, "Users().ByEmail in B", err, storage.ErrNotFound)
-		_, err = tx.Applications().Get(ctx, app.ID)
-		wantErr(f.t, "Applications().Get in B", err, storage.ErrNotFound)
-		return nil
-	})
-	f.wantEmptyTenant(b)
-	f.inTenant(b, func(ctx context.Context, tx storage.Tx) error {
-		wantErr(f.t, "same slug in B", tx.Organizations().Create(ctx, f.org("sales")), nil)
-		wantErr(f.t, "same e-mail in B", tx.Users().Create(ctx, f.user("ana@example.com")), nil)
+		wantErr(f.t, what+": Users().ByEmail in B", err, storage.ErrNotFound)
+		_, err = tx.Applications().Get(ctx, app)
+		wantErr(f.t, what+": Applications().Get in B", err, storage.ErrNotFound)
 		return nil
 	})
 }

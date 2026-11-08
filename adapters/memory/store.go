@@ -8,7 +8,8 @@
 // so an error or a panic leaves the committed data untouched. Stored values
 // never alias the caller's: slices are copied on the way in and on the way
 // out. IDs are unique across tenants: a create checks the committed rows of
-// every other tenant, which cannot change while the mutex is held. A nested InTenant or InSystem made with the ctx given to fn is refused
+// every other tenant, which cannot change while the mutex is held. A nested
+// InTenant or InSystem made with the ctx given to fn is refused
 // (storage.ErrNestedTx); one made with another ctx deadlocks.
 package memory
 

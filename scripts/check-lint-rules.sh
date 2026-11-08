@@ -16,6 +16,7 @@ expected=(
 	"authn/core/infra_import\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'core-no-infra'"
 	"authn/core/violations\.go:[0-9]+:[0-9]+: .*time\.Now.*inject a clock"
 	"authn/core/clock_alias\.go:[0-9]+:[0-9]+: .*t\.Since.*inject a clock"
+	"authn/core/clock_test\.go:[0-9]+:[0-9]+: .*time\.Now.*inject a clock"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'crypto-only-in-shared-crypto'"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'no-math-rand'"
 	"examples/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
