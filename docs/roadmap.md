@@ -49,7 +49,7 @@ O marco 1 é executado em quatro planos: **1A** contratos e fundação
 | SHARED-002 📜 | C2 porta de criptografia | ✅ | OPS-003 |
 | SHARED-003 📜 | C3 portas de armazenamento + suíte de contrato (inclui abuso entre tenants) | ⏳ | OPS-005 |
 | SHARED-004 📜 | C4 esquema do evento de auditoria | ⏳ | OPS-003 |
-| SHARED-005 📜 | C5 biblioteca de máquinas de estados (módulo publicável) | ⏳ | OPS-003 |
+| SHARED-005 📜 | C5 biblioteca de máquinas de estados (módulo publicável) | ✅ | OPS-003 |
 | SHARED-006 📜 | C6 API administrativa em Protobuf (tenants, organizações, aplicações, usuários) | ⏳ | OPS-004 |
 | AUTHN-001 📜 | C8 perfil OIDC suportado e discovery | ⏳ | OPS-003 |
 | AUTHN-002 📜 | C9 API de login guiada (estado e passos) | ⏳ | SHARED-005 |

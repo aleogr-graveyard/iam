@@ -21,12 +21,14 @@ expected=(
 	"examples/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
 	"e2e/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
 	"internal/testhelpers/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/shared/crypto/cryptotest' .*from list 'cryptotest-only-in-tests'"
+	"internal/smhelpers/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/shared/statemachine/statemachinetest' .*from list 'statemachinetest-only-in-tests'"
 )
 absent=(
 	"internal/anywhere/clock_ok\.go:[0-9]+:[0-9]+: .*inject a clock"
 	"shared/crypto/sha\.go:[0-9]+:[0-9]+: .*crypto-only-in-shared-crypto"
 	"authn/core/shared_ok\.go:[0-9]+:[0-9]+: "
 	"internal/testhelpers/ok_test\.go:[0-9]+:[0-9]+: "
+	"internal/smhelpers/ok_test\.go:[0-9]+:[0-9]+: "
 )
 
 cd "$root/tools/lintfixture" || exit 1
