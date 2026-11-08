@@ -100,6 +100,13 @@ linters:
             - "!$test"
           deny:
             - {pkg: github.com/aleogr/iam/shared/statemachine/statemachinetest, desc: test-only state-machine helpers; never import them from production code}
+        # The storage contract suite exists for adapter tests only.
+        storagetest-only-in-tests:
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - {pkg: github.com/aleogr/iam/shared/storage/storagetest, desc: test-only storage contract suite; never import it from production code}
         no-math-rand:
           files:
             - $all
