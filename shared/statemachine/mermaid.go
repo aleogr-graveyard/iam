@@ -38,7 +38,7 @@ func (d *Definition[S, E, C]) Mermaid() string {
 }
 
 var labelEscapes = map[rune]string{
-	'#': "#35;", '"': "#quot;", ':': "#58;", ';': "#59;",
+	'#': "#35;", '&': "#38;", '"': "#quot;", ':': "#58;", ';': "#59;",
 	'<': "#lt;", '>': "#gt;", '{': "#123;", '}': "#125;",
 }
 
@@ -50,6 +50,9 @@ func isLineBreakOrControl(r rune) bool {
 // edge colon. Characters with meaning to the parser become Mermaid entity
 // codes; line breaks and other control characters become a space.
 func escapeLabel(s string) string {
+	if s == "" {
+		return "(empty)"
+	}
 	var b strings.Builder
 	for _, r := range s {
 		if esc, ok := labelEscapes[r]; ok {

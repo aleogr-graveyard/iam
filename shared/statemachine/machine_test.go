@@ -191,6 +191,56 @@ func TestMermaid_SanitizesLabels(t *testing.T) {
 	}
 }
 
+func TestTransitions_ReturnsCopyInDeclarationOrder(t *testing.T) {
+	d := newDef(t)
+	got := d.Transitions()
+	want := []statemachine.Fired[state, event]{
+		{From: "start", Event: "submit", To: "verify"},
+		{From: "verify", Event: "pass", To: "done"},
+		{From: "verify", Event: "fail", To: "start"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	got[0].To = "evil"
+	if d.Transitions()[0].To != "verify" {
+		t.Fatal("Transitions must return a copy")
+	}
+}
+
+type code int
+
+func TestNew_AcceptsIntEnums(t *testing.T) {
+	d, err := statemachine.New("n", statemachine.Transition[code, code, struct{}]{From: 1, Event: 2, To: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, err := d.Fire(1, 2, struct{}{}); err != nil || f.To != 3 {
+		t.Fatalf("%+v %v", f, err)
+	}
+}
+
+func TestMermaid_EmptyLabelsAndAmpersand(t *testing.T) {
+	d, err := statemachine.New("m", statemachine.Transition[state, event, ctx]{From: "", Event: "", To: "a&b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := d.Mermaid()
+	for _, want := range []string{`state "(empty)" as s0`, `state "a#38;b" as s1`, `s0 --> s1 : (empty)`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `""`) {
+		t.Errorf("empty quoted label in\n%s", out)
+	}
+}
+
 func Example() {
 	d, err := statemachine.New("door",
 		statemachine.Transition[string, string, struct{}]{From: "closed", Event: "open", To: "opened"},

@@ -93,6 +93,13 @@ linters:
             - "!$test"
           deny:
             - {pkg: github.com/aleogr/iam/shared/crypto/cryptotest, desc: test-only key helpers; never import them from production code}
+        # The state-machine test helpers exist for tests only.
+        statemachinetest-only-in-tests:
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - {pkg: github.com/aleogr/iam/shared/statemachine/statemachinetest, desc: test-only state-machine helpers; never import them from production code}
         no-math-rand:
           files:
             - $all

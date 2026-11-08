@@ -18,6 +18,18 @@ import (
 // machine declares no transition for the (state, event) pair.
 var ErrUndeclaredTransition = errors.New("statemachine: undeclared transition")
 
+// Enum is the constraint for states and events. They are value enums: strings
+// or integers, hashable and comparable without surprises. Interface types are
+// excluded because an unhashable dynamic value would panic in Fire, and floats
+// because NaN != NaN would break duplicate detection.
+//
+// States and events appear in error strings and diagrams, so they must never
+// carry user data, secrets or personal data.
+type Enum interface {
+	~string | ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+}
+
 // Transition declares that Event moves the machine from From to To.
 //
 // Guard, when not nil, is evaluated with the caller's context; a non-nil
@@ -25,37 +37,33 @@ var ErrUndeclaredTransition = errors.New("statemachine: undeclared transition")
 // allowed. Guards must be pure and fast, and must not panic: Fire does not
 // recover, so a panic propagates to the caller (the state is untouched because
 // Fire never stores it).
-type Transition[S, E comparable, C any] struct {
+type Transition[S, E Enum, C any] struct {
 	From  S
 	Event E
 	To    S
 	Guard func(C) error
 }
 
-// Fired is the result of an allowed transition.
-type Fired[S, E comparable] struct {
+// Fired is the result of an allowed transition. With To left zero it also
+// serves as the (From, Event) key of a transition.
+type Fired[S, E Enum] struct {
 	From  S
 	Event E
 	To    S
 }
 
-type key[S, E comparable] struct {
-	from S
-	ev   E
-}
-
 // Definition is an immutable state machine. It is safe for concurrent use.
-type Definition[S, E comparable, C any] struct {
+type Definition[S, E Enum, C any] struct {
 	name  string
 	ts    []Transition[S, E, C] // declaration order, private copy
-	index map[key[S, E]]int
+	index map[Fired[S, E]]int
 }
 
 // New builds a Definition. It rejects an empty name, an empty transition list
 // and a duplicate (From, Event) pair, so each pair has exactly one outcome.
 // The transitions are copied: later changes to the slice do not affect the
 // Definition.
-func New[S, E comparable, C any](name string, ts ...Transition[S, E, C]) (*Definition[S, E, C], error) {
+func New[S, E Enum, C any](name string, ts ...Transition[S, E, C]) (*Definition[S, E, C], error) {
 	if name == "" {
 		return nil, errors.New("statemachine: name must not be empty")
 	}
@@ -65,16 +73,27 @@ func New[S, E comparable, C any](name string, ts ...Transition[S, E, C]) (*Defin
 	d := &Definition[S, E, C]{
 		name:  name,
 		ts:    append([]Transition[S, E, C](nil), ts...),
-		index: make(map[key[S, E]]int, len(ts)),
+		index: make(map[Fired[S, E]]int, len(ts)),
 	}
 	for i, t := range d.ts {
-		k := key[S, E]{t.From, t.Event}
+		k := Fired[S, E]{From: t.From, Event: t.Event}
 		if _, dup := d.index[k]; dup {
 			return nil, fmt.Errorf("statemachine: machine %q: duplicate transition from %v on event %v", name, t.From, t.Event)
 		}
 		d.index[k] = i
 	}
 	return d, nil
+}
+
+// Transitions returns a copy of the declared transitions, in declaration
+// order, without their guards. Test helpers use it to check a machine against
+// an expected table.
+func (d *Definition[S, E, C]) Transitions() []Fired[S, E] {
+	out := make([]Fired[S, E], len(d.ts))
+	for i, t := range d.ts {
+		out[i] = Fired[S, E]{From: t.From, Event: t.Event, To: t.To}
+	}
+	return out
 }
 
 // Name returns the machine name.
@@ -85,7 +104,7 @@ func (d *Definition[S, E, C]) Name() string { return d.name }
 // If the guard fails, its error is returned wrapped (errors.Is works). In both
 // failure cases Fired is the zero value, meaning the state is unchanged.
 func (d *Definition[S, E, C]) Fire(from S, ev E, c C) (Fired[S, E], error) {
-	i, ok := d.index[key[S, E]{from, ev}]
+	i, ok := d.index[Fired[S, E]{From: from, Event: ev}]
 	if !ok {
 		return Fired[S, E]{}, fmt.Errorf("%w: machine %q has no transition from %v on event %v",
 			ErrUndeclaredTransition, d.name, from, ev)
