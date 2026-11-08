@@ -33,18 +33,16 @@ func Exhaustive[S, E statemachine.Enum, C any](t testing.TB, d *statemachine.Def
 	want := expectedTable(t, name, expected)
 	checkDeclared(t, d, stateSet, eventSet, want)
 
-	seen := 0
-	for _, s := range states {
-		for _, ev := range events {
-			k := statemachine.Fired[S, E]{From: s, Event: ev}
-			if _, ok := want[k]; ok {
-				seen++
-			}
+	outside := 0
+	for k := range want {
+		_, okS := stateSet[k.From]
+		_, okE := eventSet[k.Event]
+		if !okS || !okE {
+			outside++
 		}
 	}
-	// states and events are duplicate-free, so seen counts distinct pairs.
-	if seen != len(want) {
-		t.Errorf("%s: expected table has %d pair(s) outside states x events", name, len(want)-seen)
+	if outside > 0 {
+		t.Errorf("%s: expected table has %d pair(s) outside states x events", name, outside)
 	}
 	for _, s := range states {
 		for _, ev := range events {
