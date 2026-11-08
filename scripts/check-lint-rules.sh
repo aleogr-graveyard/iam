@@ -16,12 +16,16 @@ expected=(
 	"authn/core/infra_import\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'core-no-infra'"
 	"authn/core/violations\.go:[0-9]+:[0-9]+: .*time\.Now.*inject a clock"
 	"authn/core/clock_alias\.go:[0-9]+:[0-9]+: .*t\.Since.*inject a clock"
+	"authn/core/clock_test\.go:[0-9]+:[0-9]+: .*time\.Now.*inject a clock"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'crypto-only-in-shared-crypto'"
 	"internal/anywhere/violations\.go:[0-9]+:[0-9]+: .*from list 'no-math-rand'"
 	"examples/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
 	"e2e/x/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/internal/database' .*from list 'examples-public-api-only'"
 	"internal/testhelpers/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/shared/crypto/cryptotest' .*from list 'cryptotest-only-in-tests'"
 	"internal/smhelpers/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/shared/statemachine/statemachinetest' .*from list 'statemachinetest-only-in-tests'"
+	"internal/storagehelpers/violation\.go:[0-9]+:[0-9]+: .*'github\.com/aleogr/iam/shared/storage/storagetest' .*from list 'storagetest-only-in-tests'"
+	"internal/rootctx/violation\.go:[0-9]+:[0-9]+: .*context\.Background.*a root context only at entry points"
+	"internal/rootctx/violation\.go:[0-9]+:[0-9]+: .*context\.TODO.*a root context only at entry points"
 )
 absent=(
 	"internal/anywhere/clock_ok\.go:[0-9]+:[0-9]+: .*inject a clock"
@@ -29,6 +33,12 @@ absent=(
 	"authn/core/shared_ok\.go:[0-9]+:[0-9]+: "
 	"internal/testhelpers/ok_test\.go:[0-9]+:[0-9]+: "
 	"internal/smhelpers/ok_test\.go:[0-9]+:[0-9]+: "
+	"internal/storagehelpers/ok_test\.go:[0-9]+:[0-9]+: "
+	"internal/rootctx/ok_test\.go:[0-9]+:[0-9]+: "
+	"cmd/x/rootctx_ok\.go:[0-9]+:[0-9]+: "
+	"examples/x/rootctx_ok\.go:[0-9]+:[0-9]+: "
+	"internal/httpserver/rootctx_ok\.go:[0-9]+:[0-9]+: "
+	"internal/testdb/rootctx_ok\.go:[0-9]+:[0-9]+: "
 )
 
 cd "$root/tools/lintfixture" || exit 1

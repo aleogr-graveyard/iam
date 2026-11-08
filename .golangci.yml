@@ -25,6 +25,11 @@ linters:
       forbid:
         - pattern: ^time\.(Now|Since|Until|After|AfterFunc|Tick|NewTimer|NewTicker|Sleep)$
           msg: inject a clock (CLAUDE.md)
+        # A fresh root context drops the caller's cancellation and deadline and
+        # escapes the storage nesting check (shared/storage); only entry points
+        # and tests may create one.
+        - pattern: ^context\.(Background|TODO)$
+          msg: pass the caller's ctx; a root context only at entry points (cmd/, internal/httpserver, internal/testdb, examples/) and in tests
     depguard:
       rules:
         # Strict allow-list: a core may import only the standard library, shared
@@ -100,6 +105,13 @@ linters:
             - "!$test"
           deny:
             - {pkg: github.com/aleogr/iam/shared/statemachine/statemachinetest, desc: test-only state-machine helpers; never import them from production code}
+        # The storage contract suite exists for adapter tests only.
+        storagetest-only-in-tests:
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - {pkg: github.com/aleogr/iam/shared/storage/storagetest, desc: test-only storage contract suite; never import it from production code}
         no-math-rand:
           files:
             - $all
@@ -110,6 +122,10 @@ linters:
     rules:
       - linters: [forbidigo]
         path-except: '(^|/)(authn|authz)/core/'
+        text: inject a clock
+      - linters: [forbidigo]
+        path: '((^|/)(cmd|examples)/|(^|/)internal/(httpserver|testdb)/|_test\.go$)'
+        text: a root context only at entry points
 formatters:
   enable:
     - gofmt
