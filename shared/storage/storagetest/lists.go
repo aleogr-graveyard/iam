@@ -138,20 +138,21 @@ type scopedKind[R, T any, K ~struct{ ids.ID }] struct {
 	repo   func(storage.Tx) R
 	create func(R, context.Context, T) error
 	list   func(R, context.Context, K, int) ([]T, error)
+	get    func(R, context.Context, K) (T, error)
 	row    func(f *fixture, i int) T // a valid, distinct i-th row
 }
 
 var (
 	orgKind = scopedKind[storage.OrganizationRepo, tenancy.Organization, ids.OrganizationID]{
-		storage.Tx.Organizations, storage.OrganizationRepo.Create, storage.OrganizationRepo.List,
+		storage.Tx.Organizations, storage.OrganizationRepo.Create, storage.OrganizationRepo.List, storage.OrganizationRepo.Get,
 		func(f *fixture, i int) tenancy.Organization { return f.org(fmt.Sprintf("org-%d", i)) },
 	}
 	userKind = scopedKind[storage.UserRepo, tenancy.User, ids.UserID]{
-		storage.Tx.Users, storage.UserRepo.Create, storage.UserRepo.List,
+		storage.Tx.Users, storage.UserRepo.Create, storage.UserRepo.List, storage.UserRepo.Get,
 		func(f *fixture, i int) tenancy.User { return f.user(fmt.Sprintf("user%d@example.com", i)) },
 	}
 	appKind = scopedKind[storage.ApplicationRepo, tenancy.Application, ids.ApplicationID]{
-		storage.Tx.Applications, storage.ApplicationRepo.Create, storage.ApplicationRepo.List,
+		storage.Tx.Applications, storage.ApplicationRepo.Create, storage.ApplicationRepo.List, storage.ApplicationRepo.Get,
 		func(f *fixture, i int) tenancy.Application { return f.app(fmt.Sprintf("App %d", i)) },
 	}
 )
@@ -198,6 +199,52 @@ func rowID(row any) ids.ID {
 		return r.ID.ID
 	}
 	panic(fmt.Sprintf("storagetest: no ID for %T", row))
+}
+
+// rowTenant returns the tenant of a tenant-scoped entity.
+func rowTenant(row any) ids.TenantID {
+	switch r := row.(type) {
+	case tenancy.Organization:
+		return r.TenantID
+	case tenancy.User:
+		return r.TenantID
+	case tenancy.Application:
+		return r.TenantID
+	}
+	panic(fmt.Sprintf("storagetest: no tenant for %T", row))
+}
+
+// withID and withTenant return a copy of row with its ID or tenant replaced.
+func withID[T any](row T, id ids.ID) T {
+	var out any
+	switch r := any(row).(type) {
+	case tenancy.Organization:
+		r.ID.ID = id
+		out = r
+	case tenancy.User:
+		r.ID.ID = id
+		out = r
+	case tenancy.Application:
+		r.ID.ID = id
+		out = r
+	}
+	return out.(T)
+}
+
+func withTenant[T any](row T, tenant ids.TenantID) T {
+	var out any
+	switch r := any(row).(type) {
+	case tenancy.Organization:
+		r.TenantID = tenant
+		out = r
+	case tenancy.User:
+		r.TenantID = tenant
+		out = r
+	case tenancy.Application:
+		r.TenantID = tenant
+		out = r
+	}
+	return out.(T)
 }
 
 func idsOf[T any](rows []T) []ids.ID {

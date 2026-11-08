@@ -23,6 +23,7 @@ func tenantTests() []test {
 		{"SystemTenant/EnsureIsIdempotent", testEnsureSystemTenantIsIdempotent},
 		{"SystemTenant/EnsureConcurrently", testEnsureSystemTenantConcurrently},
 		{"SystemTenant/EnsureValidates", testEnsureSystemTenantValidates},
+		{"SystemTenant/EnsureRefusesExistingTenantID", testEnsureRefusesExistingTenantID},
 		{"SystemTenant/SlugRefusedFromInput", testSystemSlugRefusedFromInput},
 		{"SystemTenant/UsableInTenant", testSystemTenantUsableInTenant},
 	}
@@ -232,5 +233,28 @@ func testSystemTenantUsableInTenant(f *fixture) {
 			f.t.Errorf("operator TenantID = %v, want the system tenant", got.TenantID)
 		}
 		return err
+	})
+}
+
+// testEnsureRefusesExistingTenantID: Ensure never adopts an ordinary tenant as
+// the system tenant, whatever ID it is given.
+func testEnsureRefusesExistingTenantID(f *fixture) {
+	t := f.tenantValue("acme")
+	f.inSystem(func(ctx context.Context, tx storage.SystemTx) error { return tx.CreateTenant(ctx, t) })
+	f.inSystem(func(ctx context.Context, tx storage.SystemTx) error {
+		_, err := tx.EnsureSystemTenant(ctx, t.ID, systemName, f.clk)
+		wantErr(f.t, "Ensure with an existing tenant's ID", err, storage.ErrConflict)
+		return nil
+	})
+	f.inSystem(func(ctx context.Context, tx storage.SystemTx) error {
+		_, err := tx.SystemTenant(ctx)
+		wantErr(f.t, "SystemTenant", err, storage.ErrNotFound)
+		got, err := tx.Tenant(ctx, t.ID)
+		wantErr(f.t, "Tenant", err, nil)
+		wantEqual(f.t, "existing tenant", got, t)
+		if got.IsSystem() {
+			f.t.Error("existing tenant became the system tenant")
+		}
+		return nil
 	})
 }

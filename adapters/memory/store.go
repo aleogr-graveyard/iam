@@ -7,7 +7,8 @@
 // tenant, or of the tenant registry) and swaps it in only when fn returns nil,
 // so an error or a panic leaves the committed data untouched. Stored values
 // never alias the caller's: slices are copied on the way in and on the way
-// out. A nested InTenant or InSystem made with the ctx given to fn is refused
+// out. IDs are unique across tenants: a create checks the committed rows of
+// every other tenant, which cannot change while the mutex is held. A nested InTenant or InSystem made with the ctx given to fn is refused
 // (storage.ErrNestedTx); one made with another ctx deadlocks.
 package memory
 
@@ -62,7 +63,7 @@ func (s *Store) InTenant(ctx context.Context, tenant ids.TenantID, fn func(conte
 	if _, ok := s.reg.tenants.byID[tenant.ID]; !ok {
 		return storage.ErrInvalidTenant
 	}
-	tx := &tenantTx{tenant: tenant, data: s.tenants[tenant.ID].clone(), allowInsecureHTTP: s.allowInsecureHTTP}
+	tx := &tenantTx{tenant: tenant, data: s.tenants[tenant.ID].clone(), all: s.tenants, allowInsecureHTTP: s.allowInsecureHTTP}
 	defer tx.finish()
 	if err := run(txCtx, func(ctx context.Context) error { return fn(ctx, tx) }); err != nil {
 		return err

@@ -3,6 +3,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/aleogr/iam/shared/ids"
 	"github.com/aleogr/iam/shared/storage"
@@ -15,9 +16,27 @@ func isolationTests() []test {
 		{"CrossTenantIsolation/Reads", testIsolationReads},
 		{"CrossTenantIsolation/Memberships", testIsolationMemberships},
 		{"CrossTenantIsolation/CreateForcesTxTenant", testIsolationCreateForcesTxTenant},
-		{"CrossTenantIsolation/ListAfterFromOtherTenant", testIsolationListAfterFromOtherTenant},
-		{"CrossTenantIsolation/SameIDInOtherTenant", testIsolationSameID},
 	}
+}
+
+// scopedIsolationTests run, for every tenant-scoped kind, the isolation rules
+// that apply to all of them alike.
+func scopedIsolationTests() []test {
+	var out []test
+	for _, k := range []struct {
+		name              string
+		listAfter, sameID func(*fixture)
+	}{
+		{"Organizations", orgKind.testListAfterFromOtherTenant, orgKind.testSameIDInOtherTenant},
+		{"Users", userKind.testListAfterFromOtherTenant, userKind.testSameIDInOtherTenant},
+		{"Applications", appKind.testListAfterFromOtherTenant, appKind.testSameIDInOtherTenant},
+	} {
+		out = append(out,
+			test{"CrossTenantIsolation/ListAfterFromOtherTenant/" + k.name, k.listAfter},
+			test{"CrossTenantIsolation/SameIDInOtherTenant/" + k.name, k.sameID},
+		)
+	}
+	return out
 }
 
 // testIsolationReads: rows of A are invisible to every read in B, and their
@@ -127,69 +146,58 @@ func testIsolationCreateForcesTxTenant(f *fixture) {
 	})
 }
 
-// testIsolationListAfterFromOtherTenant: an `after` taken from tenant B is a
-// position only; the page holds A's rows past it and nothing of B.
-func testIsolationListAfterFromOtherTenant(f *fixture) {
+// testListAfterFromOtherTenant: an `after` taken from tenant B is a position
+// only; the page holds A's rows past it and nothing of B.
+func (k scopedKind[R, T, K]) testListAfterFromOtherTenant(f *fixture) {
 	a, b := f.tenant("tenant-a"), f.tenant("tenant-b")
-	var aIDs []ids.OrganizationID
-	var bID ids.OrganizationID
-	for _, slug := range []string{"a-1", "a-2", "b-1", "a-3", "a-4"} {
-		o := f.org(slug)
-		tenant := a
-		if slug == "b-1" {
-			tenant, bID = b, o.ID
+	// B's rows sit both at and after the cursor, so a page that mixed tenants
+	// would show one.
+	var aIDs, bIDs []ids.ID
+	for i, tenant := range []ids.TenantID{a, a, b, a, b, a} {
+		r := k.row(f, i)
+		if tenant == b {
+			bIDs = append(bIDs, rowID(r))
 		} else {
-			aIDs = append(aIDs, o.ID)
+			aIDs = append(aIDs, rowID(r))
 		}
-		f.inTenant(tenant, func(ctx context.Context, tx storage.Tx) error { return tx.Organizations().Create(ctx, o) })
+		f.inTenant(tenant, func(ctx context.Context, tx storage.Tx) error { return k.create(k.repo(tx), ctx, r) })
 	}
 	f.inTenant(a, func(ctx context.Context, tx storage.Tx) error {
-		got, err := tx.Organizations().List(ctx, bID, storage.MaxListLimit)
+		rows, err := k.list(k.repo(tx), ctx, K(struct{ ids.ID }{bIDs[0]}), storage.MaxListLimit)
 		if err != nil {
 			return err
 		}
-		var gotIDs []ids.OrganizationID
-		for _, o := range got {
-			if o.TenantID != a {
-				f.t.Errorf("row of tenant %v in A's page", o.TenantID)
+		for _, r := range rows {
+			if rowTenant(r) != a {
+				f.t.Errorf("row of tenant %v in A's page", rowTenant(r))
 			}
-			gotIDs = append(gotIDs, o.ID)
 		}
-		want := []ids.OrganizationID{aIDs[2], aIDs[3]}
-		if len(gotIDs) != len(want) || gotIDs[0] != want[0] || gotIDs[1] != want[1] {
-			f.t.Errorf("List(after B's ID) = %v, want %v", gotIDs, want)
+		if got := idsOf(rows); !slices.Equal(got, aIDs[2:]) {
+			f.t.Errorf("List(after B's ID) = %v, want %v", got, aIDs[2:])
 		}
 		return nil
 	})
 }
 
-// testIsolationSameID: creating a row whose ID exists in another tenant either
-// succeeds in the Tx's tenant or fails with ErrConflict; either way the other
-// tenant's row is untouched and stays invisible.
-func testIsolationSameID(f *fixture) {
+// testSameIDInOtherTenant: IDs are unique across tenants. Creating a row whose
+// ID exists in another tenant is ErrConflict, and the other tenant's row is
+// untouched and stays invisible.
+func (k scopedKind[R, T, K]) testSameIDInOtherTenant(f *fixture) {
 	a, b := f.tenant("tenant-a"), f.tenant("tenant-b")
-	orig := f.org("sales")
-	f.inTenant(a, func(ctx context.Context, tx storage.Tx) error { return tx.Organizations().Create(ctx, orig) })
-	orig.TenantID = a
-	twin := f.org("twin")
-	twin.ID = orig.ID
-	err := f.store.InTenant(f.ctx, b, func(ctx context.Context, tx storage.Tx) error { return tx.Organizations().Create(ctx, twin) })
-	switch {
-	case err == nil:
-		f.inTenant(b, func(ctx context.Context, tx storage.Tx) error {
-			got, err := tx.Organizations().Get(ctx, twin.ID)
-			if err == nil && (got.TenantID != b || got.Slug != "twin") {
-				f.t.Errorf("Get in B = %+v, want B's own row", got)
-			}
-			return err
-		})
-	case !errors.Is(err, storage.ErrConflict):
-		f.t.Errorf("same ID in B: error = %v, want nil or ErrConflict", err)
-	}
+	orig := k.row(f, 0)
+	f.inTenant(a, func(ctx context.Context, tx storage.Tx) error { return k.create(k.repo(tx), ctx, orig) })
+	id := K(struct{ ids.ID }{rowID(orig)})
+	twin := withID(k.row(f, 1), rowID(orig))
+	f.inTenant(b, func(ctx context.Context, tx storage.Tx) error {
+		wantErr(f.t, "same ID in B", k.create(k.repo(tx), ctx, twin), storage.ErrConflict)
+		_, err := k.get(k.repo(tx), ctx, id)
+		wantErr(f.t, "Get in B", err, storage.ErrNotFound)
+		return nil
+	})
 	f.inTenant(a, func(ctx context.Context, tx storage.Tx) error {
-		got, err := tx.Organizations().Get(ctx, orig.ID)
+		got, err := k.get(k.repo(tx), ctx, id)
 		wantErr(f.t, "Get in A", err, nil)
-		wantEqual(f.t, "A's row", got, orig)
+		wantEqual(f.t, "A's row", got, withTenant(orig, a))
 		return nil
 	})
 }

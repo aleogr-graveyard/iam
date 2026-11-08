@@ -13,15 +13,33 @@
 // tenant, whatever its TenantID field says (the field is overwritten before
 // validation). The tenant registry is reachable only through Store.InSystem.
 //
+// IDs are unique across tenants, per entity kind: creating an organization,
+// user or application whose ID exists in another tenant is ErrConflict, and the
+// other tenant's row is untouched. An ID names one row of the whole service:
+// the application ID is the OAuth client_id, and IDs appear in audit events
+// and pagination cursors, where a tenant-local ID would be ambiguous. (Postgres
+// target: PRIMARY KEY (id) plus UNIQUE (tenant_id, id), the latter the target
+// of the tenant-scoped composite foreign keys such as memberships'.)
+//
+// A tenant named in a request ({tenant} in the admin API) is resolved only
+// through SystemTx.TenantBySlug, never from a tenant ID sent by a client.
+//
 // # Transactions
 //
 //   - fn runs inside the transaction; the transaction commits when fn returns
 //     nil and rolls back when fn returns an error (returned unchanged) or
 //     panics (the panic propagates after the rollback).
 //   - fn must use the ctx it receives. Nesting is not supported: InTenant or
-//     InSystem called with that ctx returns ErrNestedTx, and the outer
-//     transaction is unaffected. A nested call made with an unrelated ctx is a
-//     bug the adapter cannot always detect (the memory adapter would deadlock).
+//     InSystem called with that ctx, or with any ctx derived from it, returns
+//     ErrNestedTx, and the outer transaction is unaffected. The marker is a
+//     ctx value, which gives two limits. It survives context.WithoutCancel and
+//     goroutines started from fn's ctx, so work deliberately detached from the
+//     transaction (an audit flush after it, say) gets a false ErrNestedTx: it
+//     must start from a ctx that does not descend from fn's. And nesting
+//     through an unrelated ctx is not detected at all (the memory adapter
+//     deadlocks; Postgres takes a second pool connection); the forbidigo rule
+//     on context.Background and context.TODO outside entry points makes such a
+//     ctx hard to come by.
 //   - A Tx, a SystemTx and their repositories are valid only while fn runs and
 //     only on fn's goroutine; afterwards every method returns ErrTxDone.
 //
@@ -47,6 +65,17 @@
 // tenant, or one that does not exist, returns this tenant's rows past that
 // position and nothing else. A limit of zero or less is ErrInvalid; a limit
 // above MaxListLimit is clamped to it (see ClampLimit).
+//
+// # Carried over to later tasks
+//
+//   - Postgres adapter (Task 9): the RLS tests are mandatory, not optional:
+//     a query without the tenant filter inside InTenant sees only that tenant,
+//     iam.tenant_id never leaks across pooled transactions, and InSystem
+//     resets iam.tenant_id (to the system tenant or to unset, ruling R1) on a
+//     connection that just served InTenant.
+//   - MembershipRepo.ListByUser is unbounded here. The tenancy service
+//     (Task 11) enforces a configurable cap on memberships per user, refusing
+//     an Add beyond it (fail closed), so the list stays small.
 package storage
 
 import (
@@ -81,7 +110,10 @@ type SystemTx interface {
 	// EnsureSystemTenant returns the system tenant, creating it through
 	// tenancy.NewSystemTenant(id, name, clk) when it does not exist yet. It is
 	// idempotent: once the system tenant exists, id, name and clk are ignored
-	// and every call returns the same tenant, also under concurrent calls.
+	// and every call returns the same tenant, also under concurrent calls, so
+	// callers must use the returned tenant's ID, never the id they passed. An
+	// id that already names an ordinary tenant is ErrConflict: Ensure never
+	// adopts an existing tenant as the system tenant.
 	EnsureSystemTenant(ctx context.Context, id ids.TenantID, name string, clk clock.Clock) (tenancy.Tenant, error)
 	// SystemTenant returns the system tenant, or ErrNotFound before
 	// EnsureSystemTenant has created it.
