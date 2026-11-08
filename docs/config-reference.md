@@ -12,8 +12,8 @@ File keys are the lower-case variable names without the `IAM_` prefix.
 | `IAM_ENVIRONMENT` | `environment` | string | `production` | no | Deployment tier: development, lab or production. |
 | `IAM_HTTP_ADDR` | `http_addr` | string | `:8080` | no | Listen address of the HTTP server. |
 | `IAM_PUBLIC_BASE_URL` | `public_base_url` | string | - | yes | Public base URL; tenant issuers are built under it (ADR 0007). Must be https outside development. |
-| `IAM_DATABASE_URL` | `database_url` | string | - | no | PostgreSQL connection URL. Optional; without it the service starts without a database. Secret. |
-| `IAM_DATABASE_APP_ROLE` | `database_app_role` | string | `iam_app` | no | Database role the service uses at runtime (subject to row level security). |
+| `IAM_DATABASE_URL` | `database_url` | string | - | no | PostgreSQL connection URL. Optional; without it the service starts without a database. iam migrate requires it and connects as the migration role. Secret. |
+| `IAM_DATABASE_APP_ROLE` | `database_app_role` | string | `iam_app` | no | Database role the service uses at runtime (subject to row level security). iam migrate grants it DML and refuses a name not matching iam_[a-z0-9_]* or a role that is a superuser, bypasses RLS or owns schema objects. |
 | `IAM_SHUTDOWN_TIMEOUT` | `shutdown_timeout` | duration | `10s` | no | Grace period for in-flight requests on shutdown. |
 | `IAM_CURSOR_KEY` | `cursor_key` | string | - | no | Base64 key (at least 32 bytes) protecting pagination cursors. Required outside development, where it may be left empty. Secret. |
 | `IAM_ARGON2_MEMORY_KIB` | `argon2_memory_kib` | integer | `19456` | no | Argon2id memory cost in KiB. Below 19456 raises a critical alert. |

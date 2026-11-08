@@ -63,8 +63,8 @@ type Config struct {
 	Environment     Environment   `env:"IAM_ENVIRONMENT" default:"production" doc:"Deployment tier: development, lab or production."`
 	HTTPAddr        string        `env:"IAM_HTTP_ADDR" default:":8080" doc:"Listen address of the HTTP server."`
 	PublicBaseURL   string        `env:"IAM_PUBLIC_BASE_URL" required:"true" doc:"Public base URL; tenant issuers are built under it (ADR 0007). Must be https outside development."`
-	DatabaseURL     string        `env:"IAM_DATABASE_URL" secret:"true" doc:"PostgreSQL connection URL. Optional; without it the service starts without a database."`
-	DatabaseAppRole string        `env:"IAM_DATABASE_APP_ROLE" default:"iam_app" doc:"Database role the service uses at runtime (subject to row level security)."`
+	DatabaseURL     string        `env:"IAM_DATABASE_URL" secret:"true" doc:"PostgreSQL connection URL. Optional; without it the service starts without a database. iam migrate requires it and connects as the migration role."`
+	DatabaseAppRole string        `env:"IAM_DATABASE_APP_ROLE" default:"iam_app" doc:"Database role the service uses at runtime (subject to row level security). iam migrate grants it DML and refuses a name not matching iam_[a-z0-9_]* or a role that is a superuser, bypasses RLS or owns schema objects."`
 	ShutdownTimeout time.Duration `env:"IAM_SHUTDOWN_TIMEOUT" default:"10s" doc:"Grace period for in-flight requests on shutdown."`
 	CursorKey       string        `env:"IAM_CURSOR_KEY" secret:"true" doc:"Base64 key (at least 32 bytes) protecting pagination cursors. Required outside development, where it may be left empty."`
 	Argon2          Argon2Settings

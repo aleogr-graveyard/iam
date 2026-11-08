@@ -62,3 +62,40 @@ func TestNew_DropsDatabaseOnCleanup(t *testing.T) {
 		t.Fatalf("database %q still exists after cleanup", name)
 	}
 }
+
+func TestNewWithAppRole_ConnectsAsUnprivilegedRole(t *testing.T) {
+	db := testdb.NewWithAppRole(t)
+	if !strings.HasPrefix(db.AppRole, "iam_test_app_") {
+		t.Fatalf("role %q lacks the iam_test_app_ prefix", db.AppRole)
+	}
+	app := connect(t, db.AppURL)
+	var user string
+	var super, bypass bool
+	err := app.QueryRow(context.Background(),
+		"SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user").Scan(&user, &super, &bypass)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if user != db.AppRole || super || bypass {
+		t.Fatalf("connected as %q (superuser %v, bypassrls %v); want %q, unprivileged", user, super, bypass, db.AppRole)
+	}
+	if _, err := app.Exec(context.Background(), "CREATE TABLE public.x (id int)"); err == nil {
+		t.Fatal("app role created a table in the public schema")
+	}
+}
+
+func TestNewWithAppRole_DropsRoleOnCleanup(t *testing.T) {
+	var role string
+	t.Run("sub", func(t *testing.T) { role = testdb.NewWithAppRole(t).AppRole })
+
+	admin := connect(t, testdb.AdminURL(t))
+	var exists bool
+	err := admin.QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).Scan(&exists)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if exists {
+		t.Fatalf("role %q still exists after cleanup", role)
+	}
+}

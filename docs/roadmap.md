@@ -62,7 +62,7 @@ O marco 1 é executado em quatro planos: **1A** contratos e fundação
 |---|---|---|---|
 | SHARED-010 | Configuração: carga, precedência, alertas e proibições absolutas | ✅ | SHARED-001 |
 | SHARED-011 | Criptografia: Argon2id, JOSE (`go-jose`), aleatoriedade, adaptador de chaves | ✅ | SHARED-002 |
-| SHARED-012 | Adaptador Postgres, migrações, RLS, orçamento de conexões com teste | ⏳ | SHARED-003 |
+| SHARED-012 | Adaptador Postgres, migrações, RLS, orçamento de conexões com teste | ✅ | SHARED-003 |
 | SHARED-013 | Tenancy: tenant, organização, membership, aplicação, tenant de sistema | ⏳ | SHARED-003, SHARED-012 |
 | SHARED-014 | Auditoria encadeada por hash | ⏳ | SHARED-004, SHARED-012 |
 | SHARED-015 | API administrativa servida com Connect | ⏳ | SHARED-006, SHARED-013 |
@@ -140,7 +140,7 @@ Levantadas nas revisões do marco 0; entram nos itens indicados.
 | `/readyz` sem cache pode ocupar as 2 conexões do pool; ping no boot é fatal com a instância dormindo | OPS-101 |
 | `depguard`: negar `net/rpc`, `net/smtp`, `net/url` e afins nos núcleos; liberar imports só de teste (`cedar-go`) na allow-list estrita | AUTHZ-012, primeiro código de núcleo |
 | Pânico dentro de uma checagem de prontidão derruba o processo | OPS-101 |
-| Teste de que URL inválida não vaza credencial | SHARED-012 |
+| ✅ Teste de que URL inválida não vaza credencial | SHARED-012 (feito: `internal/database`, `cmd/iam`) |
 | Reprodutibilidade provada no build do `ko` (com ldflags), não só no `go build` | antes do primeiro release |
 | Advisories nas ferramentas de `tools/*` sem relatório (só o módulo distribuído é barrado) | OPS-011, relatório noturno não bloqueante |
 | `make dev` exercitado de ponta a ponta no CI (job `Dev env`); torná-lo check obrigatório | ruleset, junto com a próxima mudança de checks |
