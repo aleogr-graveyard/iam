@@ -6,6 +6,15 @@
 //
 //	Load(userID, tenantID) // does not compile: the types are distinct
 //
+// An explicit conversion such as TenantID(userID) does compile; it must be done
+// deliberately, never to silence a type error.
+//
+// The zero value means "unset" and never comes from parsing: Parse,
+// UnmarshalText and JSON refuse the all-zero UUID. Wire structs mark ID fields
+// with `json:",omitzero"`, which works on Go 1.24+ through the promoted IsZero.
+// Presence of a required ID is checked by the storage ports and the domain
+// constructors.
+//
 // Time comes from an injected clock.Clock and randomness from shared/crypto.
 package ids
 
@@ -21,6 +30,9 @@ import (
 
 // ErrInvalid reports text that is not a canonical UUIDv7.
 var ErrInvalid = errors.New("ids: invalid identifier")
+
+// ErrNoClock reports a Generator used without a clock.
+var ErrNoClock = errors.New("ids: generator has no clock")
 
 // ErrTimeOutOfRange reports a clock reading outside the 48-bit millisecond
 // range that a UUIDv7 can carry.
@@ -54,9 +66,9 @@ func (id ID) String() string {
 }
 
 // Parse accepts only the canonical lowercase 8-4-4-4-12 form of a UUIDv7 with
-// the RFC 4122/9562 variant, or the all-zero UUID (the textual form of the
-// zero value, so that an unset ID round-trips). Any other version or variant
-// is refused: every identifier of this service is generated as a UUIDv7.
+// the RFC 4122/9562 variant. Any other version or variant, and the all-zero
+// UUID, are refused: every identifier of this service is generated as a
+// UUIDv7, and the zero value means "unset".
 func Parse(s string) (ID, error) {
 	if len(s) != textLen {
 		return ID{}, fmt.Errorf("%w: length %d", ErrInvalid, len(s))
@@ -65,7 +77,10 @@ func Parse(s string) (ID, error) {
 	if !ok {
 		return ID{}, fmt.Errorf("%w: malformed", ErrInvalid)
 	}
-	if !id.IsZero() && (id[6]>>4 != 7 || id[8]>>6 != 0b10) {
+	if id.IsZero() {
+		return ID{}, fmt.Errorf("%w: zero", ErrInvalid)
+	}
+	if id[6]>>4 != 7 || id[8]>>6 != 0b10 {
 		return ID{}, fmt.Errorf("%w: not a UUIDv7", ErrInvalid)
 	}
 	return id, nil
@@ -83,7 +98,7 @@ func decodeHex(s string) (ID, bool) {
 			continue
 		}
 		hi, lo := strings.IndexByte(hexDigits, s[i]), strings.IndexByte(hexDigits, s[i+1])
-		if hi < 0 || lo < 0 || s[i+1] == '-' {
+		if hi < 0 || lo < 0 {
 			return ID{}, false
 		}
 		id[j] = byte(hi)<<4 | byte(lo) //nolint:gosec // both are 0..15
@@ -117,7 +132,7 @@ type Generator struct {
 // the clock is before the Unix epoch or past the 48-bit range.
 func (g Generator) New() (ID, error) {
 	if g.Clock == nil {
-		return ID{}, errors.New("ids: generator has no clock")
+		return ID{}, ErrNoClock
 	}
 	ms := g.Clock.Now().UnixMilli()
 	if ms < 0 || ms > maxMillis {

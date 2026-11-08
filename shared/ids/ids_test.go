@@ -1,8 +1,10 @@
 package ids_test
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -37,16 +39,22 @@ func TestNew_IsVersion7AndVariant(t *testing.T) {
 }
 
 func TestNew_EncodesTimestampBigEndian(t *testing.T) {
-	id, err := gen(t0).New()
-	if err != nil {
-		t.Fatal(err)
+	cases := map[string]struct {
+		at   time.Time
+		want string
+	}{
+		"epoch":   {time.UnixMilli(0), "000000000000"},
+		"max":     {time.UnixMilli(1<<48 - 1), "ffffffffffff"},
+		"fixture": {t0, fmt.Sprintf("%012x", t0.UnixMilli())},
 	}
-	var ms uint64
-	for _, b := range id[:6] {
-		ms = ms<<8 | uint64(b)
-	}
-	if ms != uint64(t0.UnixMilli()) {
-		t.Fatalf("timestamp = %d, want %d", ms, t0.UnixMilli())
+	for name, c := range cases {
+		id, err := gen(c.at).New()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := hex.EncodeToString(id[:6]); got != c.want {
+			t.Errorf("%s: timestamp bytes %s, want %s", name, got, c.want)
+		}
 	}
 }
 
@@ -104,8 +112,8 @@ func TestNew_RejectsOutOfRangeTime(t *testing.T) {
 }
 
 func TestNew_NilClock(t *testing.T) {
-	if _, err := (ids.Generator{}).New(); err == nil {
-		t.Fatal("expected error for nil clock")
+	if _, err := (ids.Generator{}).New(); !errors.Is(err, ids.ErrNoClock) {
+		t.Fatalf("err = %v, want ErrNoClock", err)
 	}
 }
 
@@ -158,9 +166,8 @@ func TestZero(t *testing.T) {
 	if z.String() != "00000000-0000-0000-0000-000000000000" {
 		t.Fatalf("zero string = %q", z)
 	}
-	got, err := ids.Parse(z.String())
-	if err != nil || !got.IsZero() {
-		t.Fatalf("zero must round-trip: %v, %v", got, err)
+	if _, err := ids.Parse(z.String()); !errors.Is(err, ids.ErrInvalid) {
+		t.Fatalf("Parse(zero) err = %v, want ErrInvalid", err)
 	}
 	id, _ := gen(t0).New()
 	if id.IsZero() {
@@ -176,6 +183,9 @@ func TestUnmarshalText_Strict(t *testing.T) {
 	if !id.IsZero() {
 		t.Fatal("failed unmarshal must leave the ID untouched")
 	}
+	if err := id.UnmarshalText([]byte("00000000-0000-0000-0000-000000000000")); !errors.Is(err, ids.ErrInvalid) || !id.IsZero() {
+		t.Fatalf("zero accepted or receiver changed: %v", err)
+	}
 	if err := id.UnmarshalText([]byte("0192f3a0-7b3c-7abc-8def-0123456789ab")); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +195,7 @@ func TestUnmarshalText_Strict(t *testing.T) {
 	}
 }
 
-func TestTypedIDs_DoNotConvert(t *testing.T) {
+func TestTypedIDs_NotAssignable(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeFor[ids.TenantID](), reflect.TypeFor[ids.OrganizationID](),
 		reflect.TypeFor[ids.UserID](), reflect.TypeFor[ids.ApplicationID](),
@@ -229,12 +239,27 @@ func TestTypedIDs_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTypedIDs_MapKeyMarshal(t *testing.T) {
-	m := map[ids.TenantID]int{}
-	var k ids.TenantID
-	m[k] = 1
-	if b, err := json.Marshal(m); err != nil || !strings.Contains(string(b), "00000000-") {
-		t.Fatalf("map key marshal: %s %v", b, err)
+func TestTypedIDs_MapKeys(t *testing.T) {
+	const u = "0192f3a0-7b3c-7abc-8def-0123456789ab"
+	var m map[ids.TenantID]int
+	if err := json.Unmarshal([]byte(`{"`+u+`":1}`), &m); err != nil || len(m) != 1 {
+		t.Fatalf("valid key: %v %v", m, err)
+	}
+	for _, bad := range []string{"nope", "00000000-0000-0000-0000-000000000000"} {
+		var m2 map[ids.TenantID]int
+		if err := json.Unmarshal([]byte(`{"`+bad+`":1}`), &m2); err == nil {
+			t.Errorf("key %q accepted", bad)
+		}
+	}
+}
+
+func TestTypedIDs_OmitZero(t *testing.T) {
+	type wire struct {
+		T ids.TenantID `json:"t,omitzero"`
+	}
+	b, err := json.Marshal(wire{})
+	if err != nil || string(b) != "{}" {
+		t.Fatalf("Marshal = %s, %v", b, err)
 	}
 }
 
@@ -247,6 +272,9 @@ func FuzzParse(f *testing.F) {
 		id, err := ids.Parse(s)
 		if err != nil {
 			return
+		}
+		if id.IsZero() || id[6]>>4 != 7 || id[8]>>6 != 0b10 {
+			t.Fatalf("Parse(%q) accepted zero, wrong version or variant", s)
 		}
 		if id.String() != s {
 			t.Fatalf("round trip: Parse(%q).String() = %q", s, id.String())
