@@ -12,8 +12,8 @@
 // The zero value means "unset" and never comes from parsing: Parse,
 // UnmarshalText and JSON refuse the all-zero UUID. Wire structs mark ID fields
 // with `json:",omitzero"`, which works on Go 1.24+ through the promoted IsZero.
-// Presence of a required ID is checked by the storage ports and the domain
-// constructors.
+// A missing or null JSON field still leaves the zero value, so storage ports
+// and domain constructors must refuse a zero ID wherever one is required.
 //
 // Time comes from an injected clock.Clock and randomness from shared/crypto.
 package ids
