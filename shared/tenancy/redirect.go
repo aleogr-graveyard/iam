@@ -22,17 +22,22 @@ const MaxRedirectURILen = 2048
 const (
 	httpsPrefix = "https://"
 	httpPrefix  = "http://"
-	maxHostLen  = 253
-	maxLabelLen = 63
+	// uriTailChars is the RFC 3986 set allowed in the path and the query:
+	// unreserved, sub-delims except '*' (wildcard) and the single quote, ":@/?",
+	// and '%' (which must start a well-formed %HH).
+	uriTailChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&()+,;=:@/?%"
 )
 
 var (
 	// The loopback IP literals of RFC 8252 section 7.3, in canonical form.
 	loopbackHosts = []string{"127.0.0.1", "[::1]"}
-	// Percent-encoded '*', '.', '/' and '\' in the path: an encoded wildcard,
-	// an encoded dot segment or a separator that some servers decode before
-	// routing (threat model TM-OIDC-002).
-	encodedTricks = []string{"%2a", "%2e", "%2f", "%5c"}
+	defaultPorts  = map[string]string{"https": "443", "http": "80"}
+	// Percent-encoded characters refused in the path: NUL, '#', '%' (double
+	// encoding), '*', '.', '/', '?' and '\'. Each can hide a wildcard, a dot
+	// segment, a separator or a fragment from one parser but not from another
+	// (threat model TM-OIDC-002).
+	encodedTricks = []string{"%00", "%23", "%25", "%2a", "%2e", "%2f", "%3f", "%5c"}
+	broadcastIPv4 = netip.AddrFrom4([4]byte{255, 255, 255, 255})
 )
 
 // ValidateRedirectURI enforces ADR 0012, RFC 9700 section 4.1 and RFC 8252 on
@@ -50,12 +55,19 @@ var (
 //     section 7.1) are refused for now: native apps are out of milestone 1
 //     (design, section 6) and will be accepted by a later, reviewed change;
 //   - no wildcard '*' anywhere, no fragment, no userinfo, no backslash;
-//   - a lowercase host that is a DNS name, a canonical IPv4 literal or a
-//     canonical bracketed IPv6 literal without zone; no percent-encoding in the
-//     host, and no name whose last label looks numeric (127.1, 0x7f.1), which
-//     browsers would read as an IPv4 address;
-//   - if present, a port from 1 to 65535 without leading zeros;
-//   - no dot segments and no encoded '*', '.', '/' or '\' in the path.
+//   - the host is a DNS name already in canonical form (lowercase LDH, valid
+//     A-labels that the IDNA Lookup profile maps to themselves, no numeric-
+//     looking last label such as 127.1), a canonical IPv4 literal or a
+//     canonical bracketed IPv6 literal without zone; IP literals that are
+//     unspecified, broadcast, multicast, link-local, IPv4-mapped or
+//     IPv4-compatible are refused; no percent-encoding in the host;
+//   - if present, a port from 1 to 65535 without leading zeros, and not the
+//     scheme's default port (443 for https, 80 for http);
+//   - path and query use only RFC 3986 characters (unreserved, sub-delims
+//     except '*' and the single quote, ":@/?") and well-formed %HH escapes;
+//   - the path does not start with "//", has no "." segment, no ".." anywhere
+//     (which also covers "..;" tricks), and no encoded NUL, '#', '%', '*',
+//     '.', '/', '?' or '\'.
 func ValidateRedirectURI(raw string, allowInsecureHTTP bool) error {
 	if raw == "" || len(raw) > MaxRedirectURILen {
 		return redirectErr("empty or longer than %d bytes", MaxRedirectURILen)
@@ -67,11 +79,11 @@ func ValidateRedirectURI(raw string, allowInsecureHTTP bool) error {
 	if !ok {
 		return redirectErr("scheme must be https or http, lowercase, with an authority")
 	}
-	authority, path := splitAuthority(rest)
-	if err := checkAuthority(authority); err != nil {
+	authority, tail := splitAuthority(rest)
+	if err := checkAuthority(scheme, authority); err != nil {
 		return err
 	}
-	if err := checkPath(path); err != nil {
+	if err := checkTail(tail); err != nil {
 		return err
 	}
 	if scheme == "http" && !allowInsecureHTTP && !isLoopbackHost(authority) {
@@ -109,18 +121,16 @@ func splitScheme(raw string) (scheme, rest string, ok bool) {
 }
 
 // splitAuthority splits what follows "scheme://" into the authority and the
-// path (the query, if any, is not inspected beyond the character checks).
-func splitAuthority(rest string) (authority, path string) {
+// tail (path and query).
+func splitAuthority(rest string) (authority, tail string) {
 	end := strings.IndexAny(rest, "/?")
 	if end < 0 {
 		return rest, ""
 	}
-	authority, rest = rest[:end], rest[end:]
-	path, _, _ = strings.Cut(rest, "?")
-	return authority, path
+	return rest[:end], rest[end:]
 }
 
-func checkAuthority(authority string) error {
+func checkAuthority(scheme, authority string) error {
 	if strings.ContainsAny(authority, "@%") {
 		return redirectErr("userinfo or percent-encoding in the authority")
 	}
@@ -128,12 +138,23 @@ func checkAuthority(authority string) error {
 	if err != nil {
 		return err
 	}
-	if port != "" {
-		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
-			return redirectErr("port must be 1 to 65535 without leading zeros")
-		}
+	if err := checkPort(scheme, port); err != nil {
+		return err
 	}
 	return checkHost(host)
+}
+
+func checkPort(scheme, port string) error {
+	if port == "" {
+		return nil
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return redirectErr("port must be 1 to 65535 without leading zeros")
+	}
+	if port == defaultPorts[scheme] {
+		return redirectErr("explicit default port")
+	}
+	return nil
 }
 
 var errBadAuthority = redirectErr("malformed host or port")
@@ -168,71 +189,95 @@ func checkHost(host string) error {
 		return redirectErr("empty host")
 	}
 	if inner, ok := strings.CutPrefix(host, "["); ok {
-		inner = strings.TrimSuffix(inner, "]")
-		addr, err := netip.ParseAddr(inner)
-		if err != nil || !addr.Is6() || addr.Is4In6() || addr.Zone() != "" || addr.String() != inner {
-			return redirectErr("IPv6 literal must be canonical, without zone")
-		}
-		return nil
+		return checkIPv6Literal(strings.TrimSuffix(inner, "]"))
 	}
+	// ParseAddr accepts only dotted-quad decimal without leading zeros.
 	if addr, err := netip.ParseAddr(host); err == nil && addr.Is4() {
-		return nil // ParseAddr accepts only dotted-quad decimal without leading zeros
+		return checkIP(addr)
 	}
-	return checkDNSName(host)
-}
-
-// checkDNSName accepts lowercase LDH labels (RFC 1123) and refuses a name
-// whose last label is numeric or hexadecimal-looking: the WHATWG URL parser
-// reads such a host as an IPv4 address (127.1, 2130706433, 0x7f.0.0.1).
-func checkDNSName(host string) error {
-	if len(host) > maxHostLen {
-		return redirectErr("host longer than %d bytes", maxHostLen)
+	canonical, err := canonicalDNSName(host)
+	if err != nil {
+		return fmt.Errorf("%w: host: %w", ErrInvalidRedirectURI, err)
 	}
-	labels := strings.Split(host, ".")
-	for _, l := range labels {
-		if !isLDHLabel(l) {
-			return redirectErr("host must be lowercase letters, digits, dashes and dots")
-		}
-	}
-	if last := labels[len(labels)-1]; strings.HasPrefix(last, "0x") || strings.Trim(last, "0123456789") == "" {
-		return redirectErr("host looks like a numeric IPv4 address")
+	if canonical != host {
+		return redirectErr("host is not in canonical lowercase A-label form")
 	}
 	return nil
 }
 
-func isLDHLabel(l string) bool {
-	if l == "" || len(l) > maxLabelLen || l[0] == '-' || l[len(l)-1] == '-' {
-		return false
+func checkIPv6Literal(inner string) error {
+	addr, err := netip.ParseAddr(inner)
+	if err != nil || !addr.Is6() || addr.Zone() != "" || addr.String() != inner {
+		return redirectErr("IPv6 literal must be canonical, without zone")
 	}
-	for i := 0; i < len(l); i++ {
-		if !isLowerAlnum(l[i]) && l[i] != '-' {
-			return false
-		}
-	}
-	return true
+	return checkIP(addr)
 }
 
+// checkIP refuses addresses that never name a single reachable client host,
+// and IPv6 forms that embed an IPv4 address (a second spelling of it).
+func checkIP(a netip.Addr) error {
+	if a.IsUnspecified() || a == broadcastIPv4 || a.IsMulticast() ||
+		a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.Is4In6() || isIPv4Compatible(a) {
+		return redirectErr("unspecified, broadcast, multicast, link-local or IPv4-embedding address")
+	}
+	return nil
+}
+
+// isIPv4Compatible reports the deprecated ::a.b.c.d form (RFC 4291 section
+// 2.5.5.1), other than :: and ::1.
+func isIPv4Compatible(a netip.Addr) bool {
+	if !a.Is6() || a.IsLoopback() || a.IsUnspecified() {
+		return false
+	}
+	b := a.As16()
+	return [12]byte(b[:12]) == [12]byte{}
+}
+
+// checkTail checks the path and the query.
+func checkTail(tail string) error {
+	if err := checkTailCharacters(tail); err != nil {
+		return err
+	}
+	path, _, _ := strings.Cut(tail, "?")
+	return checkPath(path)
+}
+
+func checkTailCharacters(tail string) error {
+	for i := 0; i < len(tail); i++ {
+		if !strings.ContainsRune(uriTailChars, rune(tail[i])) {
+			return redirectErr("character outside RFC 3986 at offset %d of the path or query", i)
+		}
+		if tail[i] == '%' && (i+2 >= len(tail) || !isHex(tail[i+1]) || !isHex(tail[i+2])) {
+			return redirectErr("malformed percent-encoding")
+		}
+	}
+	return nil
+}
+
+func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
+
 func checkPath(path string) error {
+	if strings.HasPrefix(path, "//") {
+		return redirectErr("path starts with //")
+	}
 	lower := strings.ToLower(path)
 	for _, t := range encodedTricks {
 		if strings.Contains(lower, t) {
-			return redirectErr("encoded wildcard, dot or separator in the path")
+			return redirectErr("encoded NUL, '#', '%%', '*', '.', '/', '?' or '\\' in the path")
 		}
 	}
-	for seg := range strings.SplitSeq(path, "/") {
-		if seg == "." || seg == ".." {
-			return redirectErr("dot segment in the path")
-		}
+	if strings.Contains(path, "..") {
+		return redirectErr("'..' in the path")
+	}
+	if slices.Contains(strings.Split(path, "/"), ".") {
+		return redirectErr("dot segment in the path")
 	}
 	return nil
 }
 
 func isLoopbackHost(authority string) bool {
 	host, _, err := splitHostPort(authority)
-	if err != nil {
-		return false
-	}
-	return slices.Contains(loopbackHosts, host)
+	return err == nil && slices.Contains(loopbackHosts, host)
 }
 
 var errParserMismatch = errors.New("parser disagreement")

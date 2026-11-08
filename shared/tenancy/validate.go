@@ -20,6 +20,7 @@ var (
 	errZero          = errors.New("zero value")
 	errUnknown       = errors.New("unknown value")
 	errNotNormalized = errors.New("not in normalized form")
+	errNoClock       = errors.New("no clock")
 )
 
 // invalid returns the error for a field of an entity. err must never carry the
@@ -92,8 +93,10 @@ const MaxNameLen = 128
 
 // ValidateName accepts a display name of 1 to MaxNameLen characters of valid
 // UTF-8, without leading or trailing whitespace, control characters or
-// bidirectional formatting characters (which can disguise a name, such as
-// "Acme" + U+202E + "fdp.exe"). Names are refused, never silently rewritten.
+// invisible characters (see isInvisible), which can hide or reorder text: a
+// bidi override makes "Acme" + U+202E + "fdp.exe" display as "Acmeexe.pdf".
+// Names are refused, never silently rewritten. The price is that emoji ZWJ
+// sequences and variation selectors are refused too.
 func ValidateName(s string) error {
 	if s == "" || strings.TrimSpace(s) != s {
 		return fmt.Errorf("%w name: empty or surrounded by whitespace", ErrInvalid)
@@ -102,16 +105,18 @@ func ValidateName(s string) error {
 		return fmt.Errorf("%w name: invalid UTF-8 or longer than %d characters", ErrInvalid, MaxNameLen)
 	}
 	if strings.IndexFunc(s, isUnsafeInName) >= 0 {
-		return fmt.Errorf("%w name: control or bidirectional character", ErrInvalid)
+		return fmt.Errorf("%w name: control or invisible character", ErrInvalid)
 	}
 	return nil
 }
 
-func isUnsafeInName(r rune) bool { return unicode.IsControl(r) || isBidiControl(r) }
+func isUnsafeInName(r rune) bool { return unicode.IsControl(r) || isInvisible(r) }
 
-// isBidiControl reports the explicit bidirectional formatting characters
-// (Unicode UAX #9): embeddings, overrides and isolates. Marks such as U+200E
-// are left alone: they do not reorder text on their own.
-func isBidiControl(r rune) bool {
-	return r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069
+// isInvisible reports format characters (category Cf: zero-width space and
+// joiners, bidi marks, embeddings, overrides and isolates, U+FEFF, U+061C,
+// the soft hyphen) and the other default-ignorable code points of Unicode
+// (Other_Default_Ignorable_Code_Point, such as U+3164, and variation
+// selectors). Together they approximate Default_Ignorable_Code_Point plus Cf.
+func isInvisible(r rune) bool {
+	return unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }

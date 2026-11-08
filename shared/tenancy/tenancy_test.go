@@ -91,8 +91,9 @@ func TestNormalizeEmail(t *testing.T) {
 		{"domain lowercased", "alice@EXAMPLE.Com", "alice@example.com"},
 		{"local case kept", "Alice.Smith@example.com", "Alice.Smith@example.com"},
 		{"NFD local to NFC", nfdLocal + "@example.com", nfcLocal + "@example.com"},
-		{"NFD domain to NFC", "a@" + nfdDomain + ".br", "a@caf\u00e9.br"},
-		{"IDN domain lowercased, not punycoded", "a@CAF\u00c9.BR", "a@caf\u00e9.br"},
+		{"NFD domain to A-label", "a@" + nfdDomain + ".br", "a@xn--caf-dma.br"},
+		{"IDN domain to lowercase A-label", "a@CAF\u00c9.BR", "a@xn--caf-dma.br"},
+		{"A-label kept", "a@xn--caf-dma.br", "a@xn--caf-dma.br"},
 		{"plus tag kept", "a+tag@example.com", "a+tag@example.com"},
 		{"local at 64 octets", strings.Repeat("a", 64) + "@example.com", strings.Repeat("a", 64) + "@example.com"},
 	}
@@ -109,6 +110,34 @@ func TestNormalizeEmail_NFCAndNFDAreEqual(t *testing.T) {
 	b, errB := tenancy.NormalizeEmail("jos\u00e9@example.com")
 	if errA != nil || errB != nil || a != b {
 		t.Fatalf("%q (%v) != %q (%v)", a, errA, b, errB)
+	}
+}
+
+// Every spelling of one domain must normalize to the same stored address.
+func TestNormalizeEmail_EquivalentDomainSpellings(t *testing.T) {
+	groups := map[string][]string{
+		"a@xn--bcher-kva.de": {
+			"a@b\u00fccher.de",                // U-label
+			"a@xn--bcher-kva.de",              // A-label
+			"a@XN--BCHER-KVA.DE",              // uppercase A-label
+			"a@B\u00dcCHER.DE",                // uppercase U-label
+			"a@bu\u0308cher.de",               // NFD
+			"a@b\u00fccher\u3002de",           // ideographic full stop as the dot
+			"a@b\u00fc\u00adcher.de",          // soft hyphen, ignored by IDNA mapping
+			"a@\uff42\u00fccher.\uff44\uff45", // fullwidth letters
+		},
+		"a@example.com": {
+			"a@example.com", "a@EXAMPLE.COM", "a@\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45.com",
+			"a@example\u3002com", "a@exa\u00admple.com", "a@example\uff0ecom",
+		},
+	}
+	for want, spellings := range groups {
+		for _, in := range spellings {
+			got, err := tenancy.NormalizeEmail(in)
+			if err != nil || got != want {
+				t.Errorf("NormalizeEmail(%q) = %q, %v; want %q", in, got, err, want)
+			}
+		}
 	}
 }
 
@@ -129,7 +158,7 @@ func TestNormalizeEmail_Refused(t *testing.T) {
 		"two at":              "alice@bob@example.com",
 		"empty local":         "@example.com",
 		"empty domain":        "alice@",
-		"255 octets":          "a" + max,
+		"255 octets":          strings.Repeat("a", 64) + "@" + strings.Repeat("d", 63) + "." + strings.Repeat("d", 63) + "." + strings.Repeat("d", 58) + ".com",
 		"local 65 octets":     strings.Repeat("a", 65) + "@example.com",
 		"space inside":        "ali ce@example.com",
 		"tab inside":          "alice@exa\tmple.com",
@@ -143,6 +172,25 @@ func TestNormalizeEmail_Refused(t *testing.T) {
 		"domain leading dot":  "alice@.example.com",
 		"domain trailing dot": "alice@example.com.",
 		"domain empty label":  "alice@example..com",
+		"angle brackets":      "a@<x>.com",
+		"slash in domain":     "a@ex/ample.com",
+		"quotes in domain":    "a@\"x\".com",
+		"underscore domain":   "a@ex_ample.com",
+		"single label":        "a@localhost",
+		"label leading dash":  "a@-example.com",
+		"label trailing dash": "a@example-.com",
+		"label 64 octets":     "a@" + strings.Repeat("d", 64) + ".com",
+		"invalid A-label":     "a@xn--a.com",
+		"numeric last label":  "a@1.2.3.4",
+		"IP literal":          "a@[192.0.2.1]",
+		"zero-width space":    "al\u200bice@example.com",
+		"LRM":                 "alice\u200e@example.com",
+		"BOM":                 "\ufeffalice@example.com",
+		"arabic letter mark":  "alice\u061c@example.com",
+		"soft hyphen local":   "al\u00adice@example.com",
+		"hangul filler":       "alice\u3164@example.com",
+		"variation selector":  "alice\ufe0f@example.com",
+		"input over 1 KiB":    strings.Repeat(" ", 1020) + "a@example.com",
 	}
 	for name, in := range cases {
 		got, err := tenancy.NormalizeEmail(in)
@@ -153,6 +201,20 @@ func TestNormalizeEmail_Refused(t *testing.T) {
 		if !errors.Is(err, tenancy.ErrInvalidEmail) {
 			t.Errorf("%s: %v is not ErrInvalidEmail", name, err)
 		}
+	}
+}
+
+// M7: a 64-octet local part and a 190-octet domain are each within their own
+// limit; only the 254-octet total refuses the address.
+func TestNormalizeEmail_TotalLengthBranch(t *testing.T) {
+	domain190 := strings.Repeat("d", 63) + "." + strings.Repeat("d", 63) + "." + strings.Repeat("d", 58) + ".com"
+	in := strings.Repeat("a", 64) + "@" + domain190
+	if len(domain190) != 190 || len(in) != 255 {
+		t.Fatalf("fixture: domain %d, total %d", len(domain190), len(in))
+	}
+	_, err := tenancy.NormalizeEmail(in)
+	if !errors.Is(err, tenancy.ErrInvalidEmail) || !strings.Contains(err.Error(), "longer than 254 octets") {
+		t.Fatalf("err = %v, want the total-length refusal", err)
 	}
 }
 
@@ -275,6 +337,49 @@ func TestValidateRedirectURI(t *testing.T) {
 		{"encoded slash", "https://example.com/a%2Fb", false, false},
 		{"encoded backslash", "https://example.com/a%5cb", false, false},
 		{"percent-encoded path ok", "https://example.com/a%20b", false, true},
+		{"sub-delims ok", "https://example.com/a;b=c,d!$&()+@:~_.-?q=a:b@c/d", false, true},
+		{"uppercase hex ok", "https://example.com/a%C3%A9", false, true},
+
+		// M1: RFC 3986 character allowlist in path and query.
+		{"angle brackets", "https://example.com/<x>", false, false},
+		{"double quote", "https://example.com/\"x", false, false},
+		{"single quote", "https://example.com/'x", false, false},
+		{"backtick", "https://example.com/`x", false, false},
+		{"braces", "https://example.com/{x}", false, false},
+		{"pipe", "https://example.com/a|b", false, false},
+		{"caret", "https://example.com/a^b", false, false},
+		{"brackets in path", "https://example.com/[x]", false, false},
+		{"brackets in query", "https://example.com/cb?a[]=1", false, false},
+		{"bad percent", "https://example.com/a%zz", false, false},
+		{"truncated percent", "https://example.com/a%2", false, false},
+
+		// M2: path tricks.
+		{"dot dot with param", "https://example.com/a/..;/cb", false, false},
+		{"dot dot inside segment", "https://example.com/a..b", false, false},
+		{"double-encoded dot", "https://example.com/a/%252e%252e/cb", false, false},
+		{"encoded question mark", "https://example.com/a%3fb", false, false},
+		{"encoded hash", "https://example.com/a%23b", false, false},
+		{"encoded NUL", "https://example.com/a%00b", false, false},
+		{"path starts with double slash", "https://example.com//evil.com/cb", false, false},
+
+		// M3: special IP literals.
+		{"unspecified v4", "https://0.0.0.0/cb", false, false},
+		{"unspecified v6", "https://[::]/cb", false, false},
+		{"broadcast", "https://255.255.255.255/cb", false, false},
+		{"multicast v4", "https://224.0.0.1/cb", false, false},
+		{"multicast v6", "https://[ff02::1]/cb", false, false},
+		{"link-local v4", "https://169.254.169.254/cb", false, false},
+		{"link-local v6", "https://[fe80::1]/cb", false, false},
+		{"v4-compatible v6", "https://[::7f00:1]/cb", false, false},
+		{"v4-mapped v6 https", "https://[::ffff:c000:201]/cb", false, false},
+
+		// M4: canonical form.
+		{"default https port", "https://example.com:443/cb", false, false},
+		{"default http port", "http://127.0.0.1:80/cb", false, false},
+		{"default http port dev", "http://example.com:80/cb", true, false},
+		{"http on 443 ok", "http://127.0.0.1:443/cb", false, true},
+		{"invalid punycode", "https://xn--a.com/cb", false, false},
+		{"punycode of ASCII", "https://xn--abc-.com/cb", false, false},
 	}
 	for _, c := range cases {
 		err := tenancy.ValidateRedirectURI(c.uri, c.insecure)
@@ -328,7 +433,17 @@ func TestValidateName(t *testing.T) {
 		{"Acme Corp.", true},
 		{"Soci\u00e9t\u00e9 G\u00e9n\u00e9rale", true},
 		{"\u6771\u4eac", true},
-		{"\U0001f469\u200d\U0001f4bb team", true},
+		{"\U0001f600 team", true},
+		// Format (Cf) and default-ignorable characters are invisible; an emoji
+		// ZWJ sequence or a variation selector is the accepted casualty.
+		{"\U0001f469\u200d\U0001f4bb team", false},
+		{"Ac\u200bme", false},
+		{"Ac\u200eme", false},
+		{"\ufeffAcme", false},
+		{"Ac\u061cme", false},
+		{"Ac\u00adme", false},
+		{"Ac\u3164me", false},
+		{"Acme\ufe0f", false},
 		{strings.Repeat("\u00e9", tenancy.MaxNameLen), true},
 		{strings.Repeat("\u00e9", tenancy.MaxNameLen+1), false},
 		{"", false},
@@ -365,10 +480,11 @@ func TestTenant_Validate(t *testing.T) {
 	if err := validTenant(t).Validate(); err != nil {
 		t.Fatal(err)
 	}
+	// User input with the system slug is refused: Validate fails closed.
 	sys := validTenant(t)
 	sys.Slug = tenancy.SystemTenantSlug
-	if err := sys.Validate(); err != nil {
-		t.Fatalf("the system tenant itself must validate: %v", err)
+	if err := sys.Validate(); !errors.Is(err, tenancy.ErrInvalidSlug) {
+		t.Fatalf("Validate accepted the system slug: %v", err)
 	}
 	mut := map[string]func(*tenancy.Tenant){
 		"zero id":        func(x *tenancy.Tenant) { x.ID = ids.TenantID{} },
@@ -385,6 +501,61 @@ func TestTenant_Validate(t *testing.T) {
 		if err := x.Validate(); !errors.Is(err, tenancy.ErrInvalid) {
 			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
 		}
+	}
+}
+
+func TestNewSystemTenant(t *testing.T) {
+	id := ids.TenantID{ID: newID(t)}
+	sys, err := tenancy.NewSystemTenant(id, "Operators", &clock.Fixed{T: t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := tenancy.Tenant{ID: id, Slug: tenancy.SystemTenantSlug, Name: "Operators", Status: tenancy.StatusActive, CreatedAt: t0}
+	if sys != want {
+		t.Fatalf("NewSystemTenant = %+v, want %+v", sys, want)
+	}
+	if !sys.IsSystem() {
+		t.Fatal("not the system tenant")
+	}
+	if err := sys.ValidateStored(); err != nil {
+		t.Fatalf("ValidateStored refused the system tenant: %v", err)
+	}
+	if err := sys.Validate(); err == nil {
+		t.Fatal("Validate accepted the system tenant")
+	}
+	for name, args := range map[string]struct {
+		id   ids.TenantID
+		name string
+		clk  clock.Clock
+	}{
+		"zero id":   {ids.TenantID{}, "Operators", &clock.Fixed{T: t0}},
+		"bad name":  {id, "", &clock.Fixed{T: t0}},
+		"no clock":  {id, "Operators", nil},
+		"zero time": {id, "Operators", &clock.Fixed{}},
+	} {
+		if _, err := tenancy.NewSystemTenant(args.id, args.name, args.clk); !errors.Is(err, tenancy.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+// ValidateStored accepts what Validate accepts, plus the system tenant only.
+func TestTenant_ValidateStored(t *testing.T) {
+	if err := validTenant(t).ValidateStored(); err != nil {
+		t.Fatal(err)
+	}
+	for _, slug := range []string{"admin", "api", "well-known", "Acme", "-x"} {
+		x := validTenant(t)
+		x.Slug = slug
+		if err := x.ValidateStored(); !errors.Is(err, tenancy.ErrInvalid) {
+			t.Errorf("slug %q: err = %v", slug, err)
+		}
+	}
+	x := validTenant(t)
+	x.Slug = tenancy.SystemTenantSlug
+	x.Status = "deleted"
+	if err := x.ValidateStored(); !errors.Is(err, tenancy.ErrInvalid) {
+		t.Fatalf("stored system tenant with a bad status: %v", err)
 	}
 }
 

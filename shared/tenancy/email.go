@@ -1,6 +1,7 @@
 package tenancy
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -14,46 +15,54 @@ import (
 var ErrInvalidEmail = fmt.Errorf("%w e-mail", ErrInvalid)
 
 const (
-	maxEmailLen = 254 // RFC 5321 section 4.5.3.1.3, forward-path minus the brackets
-	maxLocalLen = 64  // RFC 5321 section 4.5.3.1.1
+	maxEmailInput = 1024 // raw input, checked before any trimming or normalization
+	maxEmailLen   = 254  // RFC 5321 section 4.5.3.1.3, forward-path minus the brackets
+	maxLocalLen   = 64   // RFC 5321 section 4.5.3.1.1
 )
 
 // NormalizeEmail returns the canonical form of an e-mail address, used for
-// storage and for every comparison: surrounding whitespace trimmed, Unicode
-// NFC, domain lowercased. The local part keeps its case: RFC 5321 lets the
-// receiving host treat it as case-sensitive.
+// storage and for every comparison, so that every spelling of one mailbox
+// yields the same string:
 //
-// It refuses invalid UTF-8, any whitespace, control or bidirectional character
-// inside the address, anything but exactly one '@', an empty local part, a
-// domain with an empty label, a local part over 64 octets and an address over
-// 254 octets after normalization.
+//   - input over 1 KiB is refused before any other work;
+//   - surrounding whitespace is trimmed; invalid UTF-8, and whitespace or
+//     control characters inside the address, are refused;
+//   - exactly one '@', separating a non-empty local part and a domain;
+//   - the local part is NFC-normalized and keeps its case (RFC 5321 lets the
+//     receiving host treat it as case-sensitive); invisible characters in it
+//     (format characters, category Cf, and other default-ignorable code
+//     points such as U+200B, U+200E, U+FEFF, U+061C, U+00AD) are refused;
+//   - the domain is converted to its lowercase A-label form (see
+//     canonicalDNSName: UTS #46 mapping, so the uppercase, lowercase, NFD
+//     and A-label spellings of one IDN domain are one domain) and must have
+//     at least two labels; address literals ("[192.0.2.1]") are refused;
+//   - limits (local part 64 octets, address 254 octets) are measured on the
+//     stored form.
 //
-// Internationalized domains are lowercased and NFC-normalized but not converted
-// to punycode: the address is an identifier here, not something this package
-// delivers mail to, and NFC plus lowercase already gives one spelling per
-// domain for the comparisons the service makes. IDNA mapping can be added
-// later behind the same function without changing stored ASCII addresses.
-//
-// This is syntax normalization only; it says nothing about deliverability or
-// ownership, which only a verification message proves.
+// Confusable characters are accepted: this is syntax normalization only, and
+// ownership is proven by a verification message, never by the spelling. The
+// domain is displayed in its A-label form, so a look-alike domain does not
+// pass for the real one.
 func NormalizeEmail(s string) (string, error) {
+	if len(s) > maxEmailInput {
+		return "", fmt.Errorf("%w: input longer than %d bytes", ErrInvalidEmail, maxEmailInput)
+	}
 	s = strings.TrimSpace(s)
 	if !utf8.ValidString(s) {
 		return "", fmt.Errorf("%w: invalid UTF-8", ErrInvalidEmail)
 	}
-	if strings.IndexFunc(s, isUnsafeInEmail) >= 0 {
+	if strings.IndexFunc(s, isSpaceOrControl) >= 0 {
 		return "", fmt.Errorf("%w: whitespace or control character", ErrInvalidEmail)
 	}
 	local, domain, ok := strings.Cut(s, "@")
 	if !ok || strings.Contains(domain, "@") {
 		return "", fmt.Errorf("%w: must contain exactly one '@'", ErrInvalidEmail)
 	}
-	local = norm.NFC.String(local)
-	domain = norm.NFC.String(strings.ToLower(domain))
-	if local == "" || len(local) > maxLocalLen {
-		return "", fmt.Errorf("%w: local part must be 1 to %d octets", ErrInvalidEmail, maxLocalLen)
+	local, err := normalizeLocal(local)
+	if err != nil {
+		return "", err
 	}
-	if err := checkDomainLabels(domain); err != nil {
+	if domain, err = normalizeDomain(domain); err != nil {
 		return "", err
 	}
 	out := local + "@" + domain
@@ -63,15 +72,28 @@ func NormalizeEmail(s string) (string, error) {
 	return out, nil
 }
 
-func checkDomainLabels(domain string) error {
-	for label := range strings.SplitSeq(domain, ".") {
-		if label == "" {
-			return fmt.Errorf("%w: empty domain or domain label", ErrInvalidEmail)
-		}
+func normalizeLocal(local string) (string, error) {
+	if strings.IndexFunc(local, isInvisible) >= 0 {
+		return "", fmt.Errorf("%w: invisible character in the local part", ErrInvalidEmail)
 	}
-	return nil
+	local = norm.NFC.String(local)
+	if local == "" || len(local) > maxLocalLen {
+		return "", fmt.Errorf("%w: local part must be 1 to %d octets", ErrInvalidEmail, maxLocalLen)
+	}
+	return local, nil
 }
 
-func isUnsafeInEmail(r rune) bool {
-	return unicode.IsSpace(r) || unicode.IsControl(r) || isBidiControl(r)
+var errSingleLabel = errors.New("domain needs at least two labels")
+
+func normalizeDomain(domain string) (string, error) {
+	ascii, err := canonicalDNSName(domain)
+	if err == nil && !strings.Contains(ascii, ".") {
+		err = errSingleLabel
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalidEmail, err)
+	}
+	return ascii, nil
 }
+
+func isSpaceOrControl(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }

@@ -43,7 +43,7 @@ func TestHashSecret_RefusesShortSecret(t *testing.T) {
 	mustHashSecret(t, make([]byte, MinSecretBytes))
 }
 
-func TestHashSecret_ConstantTimeVerify(t *testing.T) {
+func TestVerifySecret_MatchesOnlyExact(t *testing.T) {
 	s := secret32(0x42)
 	h := mustHashSecret(t, s)
 	if !VerifySecret(s, h) {
