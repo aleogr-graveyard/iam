@@ -22,7 +22,7 @@ func FuzzValidateRedirectURI(f *testing.F) {
 		"javascript:alert(1)", "com.example.app:/cb", "https://ex%61mple.com/", "https://[fe80::1%25x]/",
 		"http://0x7f.1/", "https://example.com/a/../b", "https://example.com:/", "HTTPS://A/",
 		"https://example.com:443/", "https://xn--a.com/", "https://[::7f00:1]/", "https://e.com/a%2", "https://e.com/<",
-		"https://e.com//x", "https://e.com/a..;/b", "https://e.com/%252e", "https://0.0.0.0/",
+		"https://e.com//x", "https://e.com/a..;/b", "https://e.com/.;/b", "https://xn--zca.de/", "https://e.com/%252e", "https://0.0.0.0/",
 	} {
 		f.Add(s, false)
 		f.Add(s, true)
@@ -107,8 +107,12 @@ func tailViolation(raw string, u *url.URL) string {
 			return "bad escape"
 		}
 	}
-	if strings.Contains(u.EscapedPath(), "..") || strings.HasPrefix(u.EscapedPath(), "//") {
-		return "dot-dot or leading // in path"
+	return pathViolation(u.EscapedPath())
+}
+
+func pathViolation(p string) string {
+	if strings.Contains(p, "..") || strings.HasPrefix(p, "//") || strings.Contains(p, ";") {
+		return "dot-dot, ';' or leading // in path"
 	}
 	return ""
 }

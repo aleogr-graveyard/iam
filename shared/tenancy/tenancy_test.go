@@ -141,6 +141,26 @@ func TestNormalizeEmail_EquivalentDomainSpellings(t *testing.T) {
 	}
 }
 
+// Golden results that pin the IDNA profile (UTS #46, non-transitional): an
+// x/net or Go upgrade that changes any of them changes stored canonical forms
+// and needs a data migration.
+func TestNormalizeEmail_IDNAGolden(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"a@\u00df.de", "a@xn--zca.de"},           // sharp s kept, not mapped to "ss"
+		{"a@\u1e9e.de", "a@xn--zca.de"},           // capital sharp s folds to sharp s
+		{"a@ss.de", "a@ss.de"},                    // ... and stays distinct from "ss"
+		{"a@\U0001f600.com", "a@xn--e28h.com"},    // emoji label accepted by UTS #46 Lookup
+		{"a@\u0130.com", "a@xn--i-9bb.com"},       // capital I with dot above
+		{"a@\u0441\u0430.com", "a@xn--80a7a.com"}, // Cyrillic look-alike of "ca": kept, shown as A-label
+	}
+	for _, c := range cases {
+		got, err := tenancy.NormalizeEmail(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("NormalizeEmail(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+}
+
 func TestNormalizeEmail_Refused(t *testing.T) {
 	// 64 + 1 + 189 = 254 octets is the maximum.
 	domain189 := strings.Repeat("d", 63) + "." + strings.Repeat("d", 63) + "." + strings.Repeat("d", 57) + ".com"
@@ -337,7 +357,7 @@ func TestValidateRedirectURI(t *testing.T) {
 		{"encoded slash", "https://example.com/a%2Fb", false, false},
 		{"encoded backslash", "https://example.com/a%5cb", false, false},
 		{"percent-encoded path ok", "https://example.com/a%20b", false, true},
-		{"sub-delims ok", "https://example.com/a;b=c,d!$&()+@:~_.-?q=a:b@c/d", false, true},
+		{"sub-delims ok", "https://example.com/a,b=c!$&()+@:~_.-?q=a:b@c/d;e", false, true},
 		{"uppercase hex ok", "https://example.com/a%C3%A9", false, true},
 
 		// M1: RFC 3986 character allowlist in path and query.
@@ -380,6 +400,17 @@ func TestValidateRedirectURI(t *testing.T) {
 		{"http on 443 ok", "http://127.0.0.1:443/cb", false, true},
 		{"invalid punycode", "https://xn--a.com/cb", false, false},
 		{"punycode of ASCII", "https://xn--abc-.com/cb", false, false},
+		// IDNA golden hosts: the A-label is the only accepted spelling.
+		{"sharp s A-label", "https://xn--zca.de/cb", false, true},
+		{"emoji A-label", "https://xn--e28h.com/cb", false, true},
+		{"cyrillic A-label", "https://xn--80a7a.com/cb", false, true},
+
+		// N1: no path parameters (';'), which Tomcat and Spring strip before
+		// normalizing, turning "/.;/" and "/;./" into dot segments.
+		{"dot semicolon segment", "https://example.com/a/.;/cb", false, false},
+		{"semicolon dot segment", "https://example.com/a/;./cb", false, false},
+		{"path parameter", "https://example.com/cb;jsessionid=x", false, false},
+		{"semicolon in query ok", "https://example.com/cb?a=1;b=2", false, true},
 	}
 	for _, c := range cases {
 		err := tenancy.ValidateRedirectURI(c.uri, c.insecure)

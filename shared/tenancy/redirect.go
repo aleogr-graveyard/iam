@@ -56,7 +56,7 @@ var (
 //     (design, section 6) and will be accepted by a later, reviewed change;
 //   - no wildcard '*' anywhere, no fragment, no userinfo, no backslash;
 //   - the host is a DNS name already in canonical form (lowercase LDH, valid
-//     A-labels that the IDNA Lookup profile maps to themselves, no numeric-
+//     A-labels that the pinned IDNA profile maps to themselves, no numeric-
 //     looking last label such as 127.1), a canonical IPv4 literal or a
 //     canonical bracketed IPv6 literal without zone; IP literals that are
 //     unspecified, broadcast, multicast, link-local, IPv4-mapped or
@@ -65,8 +65,9 @@ var (
 //     scheme's default port (443 for https, 80 for http);
 //   - path and query use only RFC 3986 characters (unreserved, sub-delims
 //     except '*' and the single quote, ":@/?") and well-formed %HH escapes;
-//   - the path does not start with "//", has no "." segment, no ".." anywhere
-//     (which also covers "..;" tricks), and no encoded NUL, '#', '%', '*',
+//   - the path does not start with "//", has no ';' (path parameters, which
+//     Tomcat and Spring strip before normalizing: "/.;/", "/;./"), no "."
+//     segment, no ".." anywhere, and no encoded NUL, '#', '%', '*',
 //     '.', '/', '?' or '\'.
 func ValidateRedirectURI(raw string, allowInsecureHTTP bool) error {
 	if raw == "" || len(raw) > MaxRedirectURILen {
@@ -259,6 +260,11 @@ func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' ||
 func checkPath(path string) error {
 	if strings.HasPrefix(path, "//") {
 		return redirectErr("path starts with //")
+	}
+	// Tomcat and Spring strip ";parameters" from each segment before they
+	// normalize, so "/.;/" and "/;./" become dot segments behind this check.
+	if strings.Contains(path, ";") {
+		return redirectErr("';' (path parameter) in the path")
 	}
 	lower := strings.ToLower(path)
 	for _, t := range encodedTricks {
