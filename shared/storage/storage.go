@@ -54,6 +54,12 @@
 //   - Lookups by slug or e-mail take raw input: BySlug and TenantBySlug with a
 //     slug refused by tenancy.ValidateSlug, and ByEmail with an address refused
 //     by tenancy.NormalizeEmail, give ErrNotFound. ByEmail normalizes its input.
+//   - A statement that waits for another transaction's lock (a concurrent
+//     audit append to the same chain, a row a concurrent insert holds) longer
+//     than the configured lock timeout is ErrBusy: the transaction cannot
+//     continue, fn should return the error, and the caller may retry the
+//     whole operation later. An adapter that never waits on locks (memory)
+//     never returns it.
 //   - Error messages name entities and fields, never values: no e-mail, slug,
 //     redirect URI or secret ever appears in them.
 //

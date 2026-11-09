@@ -8,6 +8,7 @@ import (
 
 	"github.com/aleogr/iam/shared/canonjson"
 	"github.com/aleogr/iam/shared/crypto"
+	"github.com/aleogr/iam/shared/ids"
 )
 
 // HashBytes is the length of Hash and of a non-empty PrevHash.
@@ -70,8 +71,8 @@ func Seal(prev []byte, e Event) (Event, error) {
 	return e, nil
 }
 
-// VerifyChain checks that events are a whole chain, from its first event, in
-// order: every event is valid and of the first event's tenant, Sequence runs
+// VerifyChain checks that events are tenant's whole chain, from its first
+// event, in order: every event is valid and of tenant, Sequence runs
 // 1, 2, 3... without gap or repeat, every PrevHash is the Hash before it (the
 // first is empty) and every Hash is the hash of its event. It returns nil for
 // no events and ErrBrokenChain naming the first sequence position that fails.
@@ -79,7 +80,10 @@ func Seal(prev []byte, e Event) (Event, error) {
 // It cannot see newest events dropped from the end (package doc). Hashes are
 // compared in constant time although they are not secret: it costs nothing
 // and leaves no timing question to review.
-func VerifyChain(events []Event) error {
+func VerifyChain(tenant ids.TenantID, events []Event) error {
+	if tenant.IsZero() {
+		return fmt.Errorf("%w: zero tenant", ErrBrokenChain)
+	}
 	var prev []byte
 	for i, e := range events {
 		pos := int64(i) + 1
@@ -87,7 +91,7 @@ func VerifyChain(events []Event) error {
 			return fmt.Errorf("%w: position %d: %w", ErrBrokenChain, pos, err)
 		}
 		switch {
-		case e.TenantID != events[0].TenantID:
+		case e.TenantID != tenant:
 			return fmt.Errorf("%w: position %d belongs to another tenant", ErrBrokenChain, pos)
 		case e.Sequence != pos:
 			return fmt.Errorf("%w: position %d has sequence %d", ErrBrokenChain, pos, e.Sequence)

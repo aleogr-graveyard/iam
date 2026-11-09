@@ -200,6 +200,7 @@ func TestSanitize(t *testing.T) {
 		{"canceled", fmt.Errorf("query: %w", context.Canceled), context.Canceled, ""},
 		{"deadline", context.DeadlineExceeded, context.DeadlineExceeded, ""},
 		{"closed tx", pgx.ErrTxClosed, storage.ErrTxDone, ""},
+		{"lock timeout", &pgconn.PgError{Code: "55P03", Message: "canceling zq7mark due to lock timeout"}, storage.ErrBusy, "zq7mark"},
 		{"other", errors.New("cannot encode zq7mark"), nil, "zq7mark"},
 	} {
 		got := postgres.Sanitize(tc.in)

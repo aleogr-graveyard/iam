@@ -39,6 +39,44 @@ CREATE POLICY tenant_isolation ON iam.audit_events
     USING (tenant_id = NULLIF(current_setting('iam.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('iam.tenant_id', true), '')::uuid);
 
+-- The chain is enforced here too, not only by the adapter's lock: an insert
+-- must extend its tenant's chain, with the next sequence and the newest
+-- event's hash as prev_hash (empty at the genesis), found with one backward
+-- lookup in the (tenant_id, sequence) index. Otherwise a row inserted by the
+-- app role with a gap or a junk link would be chained onto by every later
+-- append and break the tenant's chain for good. The function runs as the
+-- inserting role (SECURITY INVOKER: it gains nothing), with a pinned
+-- search_path; a trigger fires without EXECUTE, so nobody is granted it.
+-- What it cannot refuse is a well-linked row with a forged hash: proving
+-- that a row came from the service is authenticity, for the later signed
+-- checkpoints (package audit).
+CREATE FUNCTION iam.audit_events_extend_chain() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    last_sequence bigint;
+    last_hash     bytea;
+BEGIN
+    SELECT e.sequence, e.hash INTO last_sequence, last_hash
+    FROM iam.audit_events e
+    WHERE e.tenant_id = NEW.tenant_id
+    ORDER BY e.sequence DESC
+    LIMIT 1;
+    IF NOT FOUND THEN
+        last_sequence := 0;
+        last_hash := ''::bytea;
+    END IF;
+    IF NEW.sequence IS DISTINCT FROM last_sequence + 1 OR NEW.prev_hash IS DISTINCT FROM last_hash THEN
+        RAISE EXCEPTION 'audit event does not extend its chain'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'audit_events_chain_check';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION iam.audit_events_extend_chain() FROM PUBLIC;
+
+CREATE TRIGGER audit_events_extend_chain BEFORE INSERT ON iam.audit_events
+    FOR EACH ROW EXECUTE FUNCTION iam.audit_events_extend_chain();
+
 -- Append-only for the service: read and insert, never update, delete or
 -- truncate (appPrivileges in roles.go).
 GRANT SELECT, INSERT ON iam.audit_events TO {{app_role}};

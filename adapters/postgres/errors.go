@@ -19,6 +19,11 @@ var ErrCorrupt = errors.New("postgres: stored row is invalid")
 const (
 	codeUniqueViolation     = "23505"
 	codeForeignKeyViolation = "23503"
+	// codeLockNotAvailable is raised when a lock wait reaches lock_timeout.
+	// A statement_timeout (57014, query_canceled) is not mapped: it cannot be
+	// told apart from a slow statement or a cancel request, so it is not a
+	// lock wait for certain.
+	codeLockNotAvailable = "55P03"
 )
 
 // dbError hides the driver's error behind a fixed message. Driver messages
@@ -35,7 +40,8 @@ func (e *dbError) Unwrap() error { return e.cause }
 
 // sanitize turns a driver error into one that is safe to log and return.
 // Context errors keep their identity, a closed transaction becomes
-// storage.ErrTxDone and a server error keeps only its SQLSTATE.
+// storage.ErrTxDone, a lock wait past lock_timeout becomes storage.ErrBusy
+// and any other server error keeps only its SQLSTATE.
 func sanitize(err error) error {
 	var pgErr *pgconn.PgError
 	var connErr *pgconn.ConnectError
@@ -46,6 +52,8 @@ func sanitize(err error) error {
 		return storage.ErrTxDone
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return &dbError{msg: "postgres: " + contextErr(err).Error(), cause: err}
+	case errors.As(err, &pgErr) && pgErr.Code == codeLockNotAvailable:
+		return &dbError{msg: storage.ErrBusy.Error(), cause: fmt.Errorf("%w: %w", storage.ErrBusy, err)}
 	case errors.As(err, &pgErr):
 		return &dbError{msg: "postgres: database error (SQLSTATE " + pgErr.Code + ")", cause: err}
 	case errors.As(err, &connErr):

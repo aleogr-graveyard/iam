@@ -12,6 +12,10 @@
 //     lower-case hex); nothing else is escaped (not '/', '<', U+2028);
 //   - integers in plain decimal, without sign for zero.
 //
+// As in encoding/json, a nil slice or map is null and an empty one is [] or
+// {}: they are different values with different bytes, so a caller that means
+// them to hash alike normalizes first (audit.Canonical turns nil Data into {}).
+//
 // It walks the value directly instead of re-reading the output of
 // encoding/json: the value's Go type decides what is accepted, so a float that
 // happens to be integral (1.0) is still refused, and no struct tag or

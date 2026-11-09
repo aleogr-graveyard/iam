@@ -18,19 +18,27 @@
 // iam.tenant_id with the system tenant's ID, so the system's own audit
 // appends (SystemTx.Audit) obey RLS; before EnsureSystemTenant has created
 // the system tenant it sets it to the empty string, which the policies read
-// as "no tenant", and SystemTx.Audit refuses to append (ruling R1).
+// as "no tenant", and SystemTx.Audit refuses to append (ruling R1). The
+// setting is transaction-local (set_config with is_local), so it never
+// survives on a pooled connection.
 //
 // # Audit
 //
 // iam.audit_events is append-only for the service: the app role may only
 // read and insert. Appends to one tenant's chain are serialized by a
-// per-tenant advisory lock (audit.go). The setting is transaction-local (set_config with
-// is_local), so it never survives on a pooled connection.
+// per-tenant advisory lock (audit.go), and a trigger owned by the migration
+// role refuses any insert that does not extend the chain (a gap, a repeat or
+// a wrong prev_hash), whoever issues it. A lock wait that hits lock_timeout
+// is storage.ErrBusy.
 //
 // # Transactions
 //
 // Each InTenant and InSystem is one database transaction at READ COMMITTED
-// on one pool connection. Every write runs inside a savepoint, so that a
+// on one pool connection, set explicitly rather than taken from the server's
+// default_transaction_isolation: the audit append relies on it, since after
+// waiting for the chain's lock its next statement must see the event the
+// previous holder committed (a REPEATABLE READ snapshot would not, and the
+// append would fail on the sequence instead of extending the chain). Every write runs inside a savepoint, so that a
 // refused write (a conflict, a missing organization) leaves the transaction
 // usable, as the contract requires. A unique violation is ErrConflict and a
 // foreign key violation ErrNotFound; errors never carry driver messages,
@@ -161,7 +169,7 @@ func begin(ctx context.Context) (context.Context, error) {
 // ctx is still live. On an error the transaction rolls back and body's error
 // is returned unchanged; on a panic it rolls back and the panic propagates.
 func (s *Store) run(ctx context.Context, body func(context.Context, pgx.Tx) error) error {
-	pgTx, err := s.pool.Begin(ctx)
+	pgTx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return sanitize(err)
 	}

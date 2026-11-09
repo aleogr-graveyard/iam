@@ -73,7 +73,7 @@ func TestAudit_AppRoleCannotUpdateOrDelete(t *testing.T) {
 			_ = sp.Rollback(ctx)
 		}
 	})
-	if evs, err := f.events(store, tenant); err != nil || len(evs) != 1 || audit.VerifyChain(evs) != nil {
+	if evs, err := f.events(store, tenant); err != nil || len(evs) != 1 || audit.VerifyChain(tenant, evs) != nil {
 		t.Errorf("chain after the attempts: %d events, %v; want the 1 intact event", len(evs), err)
 	}
 }
@@ -110,7 +110,7 @@ func TestAudit_ConcurrentFirstAppends(t *testing.T) {
 		if err != nil || len(evs) != 2 {
 			t.Fatalf("round %d: %d events, %v; want 2", round, len(evs), err)
 		}
-		if err := audit.VerifyChain(evs); err != nil {
+		if err := audit.VerifyChain(tenant, evs); err != nil {
 			t.Errorf("round %d: %v", round, err)
 		}
 	}
@@ -129,7 +129,10 @@ func TestAudit_TamperingBehindTheAdapterIsDetected(t *testing.T) {
 		"swap order": `UPDATE iam.audit_events SET sequence = 100 WHERE sequence = 2;
 			UPDATE iam.audit_events SET sequence = 2 WHERE sequence = 3;
 			UPDATE iam.audit_events SET sequence = 3 WHERE sequence = 100`,
-		"insert event": `UPDATE iam.audit_events SET sequence = 4 WHERE sequence = 3;
+		// The owner can switch the chain trigger off (a superuser here, with
+		// session_replication_role); VerifyChain still sees the change.
+		"insert event": `SET session_replication_role = replica;
+			UPDATE iam.audit_events SET sequence = 4 WHERE sequence = 3;
 			INSERT INTO iam.audit_events SELECT gen_random_uuid(), tenant_id, 3, occurred_at, schema_version, action,
 			actor_type, actor_id, target, outcome, data, hash, hash FROM iam.audit_events WHERE sequence = 2`,
 	} {
@@ -146,7 +149,7 @@ func TestAudit_TamperingBehindTheAdapterIsDetected(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Events: %v", err)
 			}
-			if err := audit.VerifyChain(evs); !errors.Is(err, audit.ErrBrokenChain) {
+			if err := audit.VerifyChain(tenant, evs); !errors.Is(err, audit.ErrBrokenChain) {
 				t.Errorf("VerifyChain = %v, want ErrBrokenChain", err)
 			}
 		})
@@ -180,5 +183,123 @@ func TestAudit_StoredRowMatchesSealedEvent(t *testing.T) {
 		if err != nil || prev != hex.EncodeToString(e.PrevHash) || hash != hex.EncodeToString(e.Hash) {
 			t.Errorf("sequence %d: stored prev %s hash %s (%v); want %x %x", e.Sequence, prev, hash, err, e.PrevHash, e.Hash)
 		}
+	}
+}
+
+// TestAudit_DatabaseRefusesInsertsThatBreakTheChain (I1): the app role,
+// reaching around the adapter with a raw INSERT, cannot leave a gap, a repeat
+// or a wrong link, which every later Append would chain onto. A raw row that
+// links correctly but carries a forged hash is accepted: proving a row came
+// from the service is authenticity, for the later signed checkpoints; the
+// chain still shows it (VerifyChain fails at that row).
+func TestAudit_DatabaseRefusesInsertsThatBreakTheChain(t *testing.T) {
+	f := newFixture(t)
+	store := newStore(t, appPool(t, migratedDB(t)))
+	tenant := f.createTenant(store, "acme")
+	first := f.appendEvent(store, tenant)
+	const insert = `INSERT INTO iam.audit_events VALUES ($1, $2, $3, now(), 1, 'a.b', 'system', 'x', '', 'success', '{}', $4, $5)`
+	forged := make([]byte, 32)
+	rawInTenant(t, store, tenant, func(ctx context.Context, raw pgx.Tx) {
+		for name, args := range map[string][]any{
+			"gap":        {f.id().String(), tenant.String(), 3, first.Hash, forged},
+			"repeat":     {f.id().String(), tenant.String(), 1, []byte{}, forged},
+			"wrong link": {f.id().String(), tenant.String(), 2, forged, forged},
+			"empty link": {f.id().String(), tenant.String(), 2, []byte{}, forged},
+			"far future": {f.id().String(), tenant.String(), 1 << 40, first.Hash, forged},
+		} {
+			sp, err := raw.Begin(ctx)
+			if err != nil {
+				t.Fatalf("savepoint: %v", err)
+			}
+			_, err = sp.Exec(ctx, insert, args...)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "audit_events_chain_check" {
+				t.Errorf("%s: error %v, want the chain check (23514)", name, err)
+			}
+			_ = sp.Rollback(ctx)
+		}
+		if _, err := raw.Exec(ctx, insert, f.id().String(), tenant.String(), 2, first.Hash, forged); err != nil {
+			t.Errorf("well-linked raw insert: %v, want accepted (authenticity gap)", err)
+		}
+	})
+	evs, err := f.events(store, tenant)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("chain: %d events, %v; want 2", len(evs), err)
+	}
+	if err := audit.VerifyChain(tenant, evs); !errors.Is(err, audit.ErrBrokenChain) {
+		t.Errorf("VerifyChain over the forged row = %v, want ErrBrokenChain", err)
+	}
+}
+
+// TestAudit_AppendWaitingPastLockTimeoutIsBusy (M2): an append that waits for
+// another transaction's append to the same chain longer than lock_timeout is
+// storage.ErrBusy, never a conflict or a generic error.
+func TestAudit_AppendWaitingPastLockTimeoutIsBusy(t *testing.T) {
+	f := newFixture(t)
+	store := newStore(t, appPool(t, migratedDB(t)))
+	tenant := f.createTenant(store, "acme")
+	first, second := f.auditEvent(), f.auditEvent()
+	held, release := make(chan struct{}), make(chan struct{})
+	var holder error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		holder = store.InTenant(t.Context(), tenant, func(ctx context.Context, tx storage.Tx) error {
+			_, err := tx.Audit().Append(ctx, first)
+			close(held)
+			<-release
+			return err
+		})
+	})
+	<-held
+	err := store.InTenant(t.Context(), tenant, func(ctx context.Context, tx storage.Tx) error {
+		_, err := tx.Audit().Append(ctx, second)
+		return err
+	})
+	close(release)
+	wg.Wait()
+	if !errors.Is(err, storage.ErrBusy) || errors.Is(err, storage.ErrConflict) {
+		t.Errorf("Append behind a held lock = %v, want ErrBusy", err)
+	}
+	if holder != nil {
+		t.Fatalf("holder: %v", holder)
+	}
+	if evs, err := f.events(store, tenant); err != nil || len(evs) != 1 {
+		t.Errorf("chain: %d events, %v; want the holder's 1", len(evs), err)
+	}
+}
+
+// TestStore_ReadCommittedDespiteServerDefault (M1): transactions are READ
+// COMMITTED whatever default_transaction_isolation says, so an append that
+// waited for the chain's lock sees the event committed meanwhile.
+func TestStore_ReadCommittedDespiteServerDefault(t *testing.T) {
+	db := migratedDB(t)
+	adminExec(t, db, "ALTER ROLE "+quote(db.AppRole)+" SET default_transaction_isolation = 'repeatable read'")
+	store := newStore(t, appPool(t, db))
+	rawInSystem(t, store, func(ctx context.Context, raw pgx.Tx) {
+		var level string
+		if err := raw.QueryRow(ctx, "SHOW transaction_isolation").Scan(&level); err != nil || level != "read committed" {
+			t.Errorf("isolation = %q (%v), want read committed", level, err)
+		}
+	})
+	f := newFixture(t)
+	tenant := f.createTenant(store, "acme")
+	var ready sync.WaitGroup
+	ready.Add(2)
+	events := []audit.Event{f.auditEvent(), f.auditEvent()}
+	errs := make([]error, len(events))
+	var wg sync.WaitGroup
+	for i, e := range events {
+		wg.Go(func() {
+			errs[i] = store.InTenant(t.Context(), tenant, func(ctx context.Context, tx storage.Tx) error {
+				ready.Done()
+				ready.Wait()
+				_, err := tx.Audit().Append(ctx, e)
+				return err
+			})
+		})
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		t.Fatalf("concurrent first appends: %v", err)
 	}
 }

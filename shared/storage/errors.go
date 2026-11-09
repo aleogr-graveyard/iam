@@ -26,6 +26,10 @@ var (
 	ErrNestedTx = errors.New("storage: nested transaction")
 	// ErrTxDone reports a Tx or SystemTx used after its fn returned.
 	ErrTxDone = errors.New("storage: transaction already finished")
+	// ErrBusy reports a wait for a lock held by another transaction that
+	// outlasted the configured limit; the transaction is spoiled and the
+	// whole operation may be retried later.
+	ErrBusy = errors.New("storage: busy, retry later")
 )
 
 // invalidError carries a validation error: errors.Is matches both ErrInvalid

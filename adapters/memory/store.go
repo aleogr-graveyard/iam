@@ -12,7 +12,9 @@
 // InTenant or InSystem made with the ctx given to fn is refused
 // (storage.ErrNestedTx); one made with another ctx deadlocks. Because
 // transactions are serialized, appends to an audit chain never race: the
-// newest event of the working copy is the head of the chain.
+// newest event of the working copy is the head of the chain, and no
+// transaction ever waits on a lock with a timeout: storage.ErrBusy is never
+// returned.
 package memory
 
 import (

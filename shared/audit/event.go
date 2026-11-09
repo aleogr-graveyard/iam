@@ -22,6 +22,13 @@
 // contains something shaped like an e-mail address (an '@' followed by a
 // domain with a dot); the rule itself is the emitter's responsibility.
 //
+// Target and Data carry only IDs, resource names built from IDs and slugs,
+// and enum-like values the service chose (a status, a client type, a
+// count), never text a user typed (a display name, a free-text reason). Not
+// only for privacy: Validate's refusal fails the append and with it the
+// business transaction it belongs to, so user-supplied text that merely
+// looks like an address (a name with an '@') would make a valid change fail.
+//
 // # Times
 //
 // Time comes from the emitter's injected clock, never from a client. It is
@@ -230,12 +237,20 @@ func validateValue(field, v string, maxBytes int) error {
 		return invalid("%s is longer than %d bytes", field, maxBytes)
 	case !utf8.ValidString(v):
 		return invalid("%s is not valid UTF-8", field)
-	case strings.ContainsFunc(v, unicode.IsControl):
-		return invalid("%s has a control character", field)
+	case strings.ContainsFunc(v, isControlOrFormat):
+		return invalid("%s has a control, format or separator character", field)
 	case looksLikeEmail(v):
 		return invalid("%s looks like an e-mail address (personal data)", field)
 	}
 	return nil
+}
+
+// isControlOrFormat reports the characters that would let a value hide or
+// reorder text when an event is displayed: controls (Cc), format characters
+// (Cf: bidi overrides such as U+202E, zero-width U+200B) and the line and
+// paragraph separators (Zl, Zp).
+func isControlOrFormat(r rune) bool {
+	return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // looksLikeEmail reports an '@' with something before it and a dotted domain

@@ -300,7 +300,7 @@ func TestMigrate_StatementTimeout(t *testing.T) {
 func TestMigrations_AppliedChecksumsArePinned(t *testing.T) {
 	want := map[string]string{
 		"20261107000000_tenancy": "f638ff45ab718727a392e97e66027974781f5cda3249a2e15c28faf625a5601d",
-		"20261107000100_audit":   "9abc7f4b82da9022a4aa4289be9f799661f7e7e5f25fc11aa37bf3d2fc39e322",
+		"20261107000100_audit":   "2d05810fa855a4c241cba5fb4829518d0020c790a3267cf968c00c8bccca2ce4",
 	}
 	rows, err := connect(t, migratedDB(t).AdminURL).Query(t.Context(),
 		"SELECT version, encode(checksum, 'hex') FROM iam.schema_migrations")

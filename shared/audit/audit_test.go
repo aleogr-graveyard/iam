@@ -50,9 +50,8 @@ func (f *fixture) event(tenant ids.TenantID, seq int64) audit.Event {
 }
 
 // chain seals n events of one tenant.
-func (f *fixture) chain(n int) []audit.Event {
+func (f *fixture) chain(tenant ids.TenantID, n int) []audit.Event {
 	f.t.Helper()
-	tenant := ids.TenantID{ID: f.id()}
 	var out []audit.Event
 	var prev []byte
 	for i := range n {
@@ -157,6 +156,28 @@ func TestSeal_CanonicalForm(t *testing.T) {
 	if hex.EncodeToString(sealed.Hash) != wantHash {
 		t.Errorf("hash = %x, want %s", sealed.Hash, wantHash)
 	}
+	// Second vector: sequence 2 linked to the first, so prev is both hashed
+	// in front of the canonical form and written into it; also computed with
+	// an independent SHA-256 over the hand-written bytes.
+	id2, _ := ids.Parse("0190f1a2-0000-7000-8000-00000000000d")
+	next := audit.Event{
+		ID: ids.EventID{ID: id2}, TenantID: e.TenantID, Sequence: 2, SchemaVersion: 1,
+		Time: time.Date(2026, 11, 9, 12, 0, 1, 0, time.UTC), Action: "organization.created",
+		Actor:  audit.Actor{Type: audit.ActorUser, ID: "0190f1a2-0000-7000-8000-00000000000c"},
+		Target: "tenants/acme/organizations/sales", Outcome: audit.OutcomeSuccess,
+		Data: map[string]string{"slug": "sales", "org_count": "2"},
+	}
+	sealed2, err := audit.Seal(sealed.Hash, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantHash2 = "7a64d83c1184f39f1bea64a0e9ffd472c6beb73865d29be1ff3848f3aa1900da"
+	if hex.EncodeToString(sealed2.Hash) != wantHash2 {
+		t.Errorf("sequence 2 hash = %x, want %s", sealed2.Hash, wantHash2)
+	}
+	if err := audit.VerifyChain(e.TenantID, []audit.Event{sealed, sealed2}); err != nil {
+		t.Errorf("the two vectors: %v", err)
+	}
 	// Nil and empty Data hash alike.
 	e.Data = nil
 	a, _ := audit.Seal(nil, e)
@@ -169,7 +190,7 @@ func TestSeal_CanonicalForm(t *testing.T) {
 
 func TestSeal_LinksAndDoesNotAlias(t *testing.T) {
 	f := newFixture(t)
-	evs := f.chain(2)
+	evs := f.chain(ids.TenantID{ID: f.id()}, 2)
 	if !bytes.Equal(evs[1].PrevHash, evs[0].Hash) {
 		t.Fatal("second event does not link to the first")
 	}
@@ -252,6 +273,11 @@ func TestValidate(t *testing.T) {
 		"long value":           func(e *audit.Event) { e.Data = map[string]string{"k": long(audit.MaxDataValueBytes + 1)} },
 		"value control":        func(e *audit.Event) { e.Data = map[string]string{"k": "a\u0085b"} },
 		"value invalid UTF-8":  func(e *audit.Event) { e.Data = map[string]string{"k": "\xc3"} },
+		"target bidi override": func(e *audit.Event) { e.Target = "tenants/\u202eacme" },
+		"actor ID zero width":  func(e *audit.Event) { e.Actor.ID = "op\u200b1" },
+		"value line separator": func(e *audit.Event) { e.Data = map[string]string{"k": "a\u2028b"} },
+		"value para separator": func(e *audit.Event) { e.Data = map[string]string{"k": "a\u2029b"} },
+		"value BOM":            func(e *audit.Event) { e.Data = map[string]string{"k": "\ufeffa"} },
 		"value e-mail":         func(e *audit.Event) { e.Data = map[string]string{"k": "ana@example.com"} },
 		"value e-mail in text": func(e *audit.Event) { e.Data = map[string]string{"k": "sent to ana@mail.example.org"} },
 		"sequence 1 prev hash": func(e *audit.Event) { e.PrevHash = make([]byte, 32) },
@@ -293,16 +319,26 @@ func TestValidate(t *testing.T) {
 
 func TestVerifyChain_AcceptsValidChains(t *testing.T) {
 	f := newFixture(t)
+	tenant := ids.TenantID{ID: f.id()}
 	for _, n := range []int{0, 1, 5} {
-		if err := audit.VerifyChain(f.chain(n)); err != nil {
+		if err := audit.VerifyChain(tenant, f.chain(tenant, n)); err != nil {
 			t.Errorf("chain of %d: %v", n, err)
 		}
+	}
+	// An intact chain of another tenant is not this tenant's chain.
+	other := f.chain(ids.TenantID{ID: f.id()}, 2)
+	if err := audit.VerifyChain(tenant, other); !errors.Is(err, audit.ErrBrokenChain) {
+		t.Errorf("another tenant's chain: %v, want ErrBrokenChain", err)
+	}
+	if err := audit.VerifyChain(ids.TenantID{}, nil); !errors.Is(err, audit.ErrBrokenChain) {
+		t.Errorf("zero tenant: %v, want ErrBrokenChain", err)
 	}
 }
 
 func TestVerifyChain_DetectsTampering(t *testing.T) {
 	f := newFixture(t)
-	other := f.chain(3)
+	tenant := ids.TenantID{ID: f.id()}
+	other := f.chain(ids.TenantID{ID: f.id()}, 3)
 	for name, tamper := range map[string]func([]audit.Event) []audit.Event{
 		"modify data": func(evs []audit.Event) []audit.Event {
 			evs[1].Data = map[string]string{"slug": "other"}
@@ -344,13 +380,13 @@ func TestVerifyChain_DetectsTampering(t *testing.T) {
 			return evs
 		},
 		"mixed tenant": func(evs []audit.Event) []audit.Event { evs[2] = other[2]; return evs },
-		"mixed tenant resealed": func(evs []audit.Event) []audit.Event {
-			e := f.event(other[0].TenantID, 3)
-			sealed, err := audit.Seal(evs[1].Hash, e)
+		// Last, linked and hashed correctly: only the tenant check sees it.
+		"foreign event resealed last": func(evs []audit.Event) []audit.Event {
+			sealed, err := audit.Seal(evs[3].Hash, f.event(other[0].TenantID, 5))
 			if err != nil {
 				t.Fatal(err)
 			}
-			evs[2] = sealed
+			evs[4] = sealed
 			return evs
 		},
 		"schema version": func(evs []audit.Event) []audit.Event { evs[1].SchemaVersion = 2; return evs },
@@ -361,8 +397,8 @@ func TestVerifyChain_DetectsTampering(t *testing.T) {
 			return evs
 		},
 	} {
-		evs := tamper(f.chain(5))
-		if err := audit.VerifyChain(evs); !errors.Is(err, audit.ErrBrokenChain) {
+		evs := tamper(f.chain(tenant, 5))
+		if err := audit.VerifyChain(tenant, evs); !errors.Is(err, audit.ErrBrokenChain) {
 			t.Errorf("%s: VerifyChain = %v, want ErrBrokenChain", name, err)
 		}
 	}

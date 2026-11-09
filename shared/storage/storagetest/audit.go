@@ -80,7 +80,7 @@ func (f *fixture) chainOf(tenant ids.TenantID) []audit.Event {
 func (f *fixture) wantChain(tenant ids.TenantID, want []audit.Event) {
 	f.t.Helper()
 	got := f.chainOf(tenant)
-	if err := audit.VerifyChain(got); err != nil {
+	if err := audit.VerifyChain(tenant, got); err != nil {
 		f.t.Errorf("stored chain: %v", err)
 	}
 	if want == nil {
@@ -206,7 +206,7 @@ func testAuditConcurrentAppends(f *fixture) {
 		if len(chain) != want {
 			f.t.Errorf("tenant %d: %d events, want %d", i, len(chain), want)
 		}
-		if err := audit.VerifyChain(chain); err != nil {
+		if err := audit.VerifyChain(tenants[i], chain); err != nil {
 			f.t.Errorf("tenant %d: %v", i, err)
 		}
 	}

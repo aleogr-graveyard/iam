@@ -197,7 +197,9 @@ func TestRLS_WithCheckRefusesForeignTenantInsert(t *testing.T) {
 		"INSERT INTO iam.users VALUES ($1, $2, 'bia@example.com', false, 'active', now())":                   {f.id().String(), bt},
 		"INSERT INTO iam.memberships VALUES ($1, $2, $3, now())":                                             {bt, b.org.String(), b.user.String()},
 		"INSERT INTO iam.applications VALUES ($1, $2, 'X', 'public', '{https://x.example/cb}', NULL, now())": {f.id().String(), bt},
-		"INSERT INTO iam.audit_events VALUES ($1, $2, 2, now(), 1, 'a.b', 'system', 'x', '', 'success', '{}', $3, $3)": {
+		// Sequence 1 passes the chain trigger, which sees none of B's events
+		// from A; the policy refuses it.
+		"INSERT INTO iam.audit_events VALUES ($1, $2, 1, now(), 1, 'a.b', 'system', 'x', '', 'success', '{}', '', $3)": {
 			f.id().String(), bt, make([]byte, 32)},
 	}
 	rawInTenant(t, store, a.tenant, func(ctx context.Context, raw pgx.Tx) {
