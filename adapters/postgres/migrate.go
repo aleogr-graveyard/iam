@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"errors"
@@ -9,10 +10,14 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aleogr/iam/shared/crypto"
 )
 
 // MigrationLockKey is the pg_advisory_xact_lock key that serializes
@@ -33,41 +38,61 @@ var (
 	migrationName = regexp.MustCompile(`^[0-9]{14}_[a-z0-9_]+\.sql$`)
 )
 
-// ErrInvalidAppRole reports an app role Migrate refuses: a name that is not a
-// plain identifier starting with iam_ (the service never touches roles of
-// other projects, ADR 0001), or a role that does not exist, is a superuser,
-// bypasses row level security, is the migrating role or a member of it, or
-// owns something in the iam schema.
-var ErrInvalidAppRole = errors.New("postgres: invalid app role")
+// ErrMigrationChanged reports an applied migration whose embedded file no
+// longer has the checksum recorded when it was applied: migrations are
+// immutable once applied; change the schema with a new one.
+var ErrMigrationChanged = errors.New("postgres: applied migration was changed")
+
+// MigrateConfig is what Migrate needs from configuration.
+type MigrateConfig struct {
+	// AppRole is the service's role (IAM_DATABASE_APP_ROLE).
+	AppRole string
+	// StatementTimeout and LockTimeout bound each statement and each lock
+	// wait of a migration transaction, the migration lock included (at least
+	// 1ms each).
+	StatementTimeout time.Duration
+	LockTimeout      time.Duration
+}
 
 // migration is one embedded SQL file.
 type migration struct {
-	version string // the file name without .sql
-	sql     string
+	version  string // the file name without .sql
+	sql      string
+	checksum []byte // crypto.Checksum of the file
 }
 
 // Migrate applies the embedded migrations (migrations/*.sql) in name order,
 // each in its own transaction under pg_advisory_xact_lock(MigrationLockKey),
-// and records each in iam.schema_migrations. Applied versions are skipped, so
-// running it again is a no-op and concurrent runs serialize. It runs as the
-// migration role, which owns the iam schema and everything in it; appRole,
-// the service's role, gets USAGE on the schema and DML on the tables.
+// and records each in iam.schema_migrations with the checksum of its file.
+// Applied versions are skipped, so running it again is a no-op and
+// concurrent runs serialize; an applied version whose file changed is
+// ErrMigrationChanged. It runs as the migration role, which owns the iam
+// schema and everything in it. Last, in one more transaction, it grants the
+// app role USAGE on the schema and verifies that the privileges the app role
+// can reach are exactly appPrivileges (ErrInvalidAppRole otherwise), so a
+// changed IAM_DATABASE_APP_ROLE fails instead of starting a service that
+// cannot work.
 //
 // Errors never carry SQL values or the connection URL.
-func Migrate(ctx context.Context, pool *pgxpool.Pool, appRole string) error {
-	if !validAppRoleName(appRole) {
+func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg MigrateConfig) error {
+	if !validAppRoleName(cfg.AppRole) {
 		return ErrInvalidAppRole
+	}
+	if cfg.StatementTimeout < time.Millisecond || cfg.LockTimeout < time.Millisecond {
+		return errors.New("postgres: migration timeouts must be at least 1ms")
 	}
 	ms, err := loadMigrations(migrationFiles)
 	if err != nil {
 		return err
 	}
-	role := pgx.Identifier{appRole}.Sanitize()
 	for _, m := range ms {
-		err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return applyMigration(ctx, tx, m, appRole, role) })
+		err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return applyMigration(ctx, tx, cfg, m) })
 		if err != nil {
 			return fmt.Errorf("postgres: migration %s: %w", m.version, sanitize(err))
 		}
+	}
+	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return grantAndVerify(ctx, tx, cfg) }); err != nil {
+		return fmt.Errorf("postgres: app role grants: %w", sanitize(err))
 	}
 	return nil
 }
@@ -98,7 +123,7 @@ func loadMigrations(files fs.FS) ([]migration, error) {
 		if strings.Contains(strings.ReplaceAll(sql, appRolePlaceholder, ""), "{{") {
 			return nil, fmt.Errorf("postgres: migration %s has an unknown placeholder", base)
 		}
-		out = append(out, migration{version: strings.TrimSuffix(base, ".sql"), sql: sql})
+		out = append(out, migration{version: strings.TrimSuffix(base, ".sql"), sql: sql, checksum: crypto.Checksum(b)})
 	}
 	return out, nil
 }
@@ -111,62 +136,59 @@ CREATE SCHEMA IF NOT EXISTS iam;
 REVOKE ALL ON SCHEMA iam FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS iam.schema_migrations (
     version    text        PRIMARY KEY,
+    checksum   bytea       NOT NULL,
     applied_at timestamptz NOT NULL
 );`
 
-func applyMigration(ctx context.Context, tx pgx.Tx, m migration, appRole, quotedRole string) error {
+// beginMigration sets the transaction's timeouts, takes the migration lock, prepares
+// the schema and checks the app role; it returns the role's OID.
+func beginMigration(ctx context.Context, tx pgx.Tx, cfg MigrateConfig) (uint32, error) {
+	_, err := tx.Exec(ctx, `SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $2, true)`,
+		milliseconds(cfg.StatementTimeout), milliseconds(cfg.LockTimeout))
+	if err != nil {
+		return 0, err
+	}
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(MigrationLockKey)); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := tx.Exec(ctx, bootstrapSQL); err != nil {
+		return 0, err
+	}
+	return checkAppRole(ctx, tx, cfg.AppRole)
+}
+
+func milliseconds(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
+
+func applyMigration(ctx context.Context, tx pgx.Tx, cfg MigrateConfig, m migration) error {
+	if _, err := beginMigration(ctx, tx, cfg); err != nil {
 		return err
 	}
-	if err := checkAppRole(ctx, tx, appRole); err != nil {
+	var stored []byte
+	err := tx.QueryRow(ctx, "SELECT checksum FROM iam.schema_migrations WHERE version = $1", m.version).Scan(&stored)
+	switch {
+	case err == nil && bytes.Equal(stored, m.checksum):
+		return nil // applied
+	case err == nil:
+		return ErrMigrationChanged
+	case !errors.Is(err, pgx.ErrNoRows):
 		return err
 	}
-	if _, err := tx.Exec(ctx, "GRANT USAGE ON SCHEMA iam TO "+quotedRole); err != nil {
+	quoted := pgx.Identifier{cfg.AppRole}.Sanitize()
+	if _, err := tx.Exec(ctx, strings.ReplaceAll(m.sql, appRolePlaceholder, quoted)); err != nil {
 		return err
 	}
-	var applied bool
-	err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM iam.schema_migrations WHERE version = $1)", m.version).Scan(&applied)
-	if err != nil || applied {
-		return err
-	}
-	if _, err := tx.Exec(ctx, strings.ReplaceAll(m.sql, appRolePlaceholder, quotedRole)); err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, "INSERT INTO iam.schema_migrations (version, applied_at) VALUES ($1, now())", m.version)
+	_, err = tx.Exec(ctx, "INSERT INTO iam.schema_migrations (version, checksum, applied_at) VALUES ($1, $2, now())",
+		m.version, m.checksum)
 	return err
 }
 
-// checkAppRole refuses an app role that could get around row level security
-// or the table ownership rules (see ErrInvalidAppRole).
-const checkAppRoleSQL = `
-SELECT r.rolsuper, r.rolbypassrls, r.rolname = current_user,
-       pg_has_role(r.oid, current_user, 'MEMBER'),
-       EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname = 'iam' AND n.nspowner = r.oid)
-       OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE n.nspname = 'iam' AND c.relowner = r.oid)
-FROM pg_roles r WHERE r.rolname = $1`
-
-func checkAppRole(ctx context.Context, tx pgx.Tx, appRole string) error {
-	var super, bypass, isSelf, member, owns bool
-	err := tx.QueryRow(ctx, checkAppRoleSQL, appRole).Scan(&super, &bypass, &isSelf, &member, &owns)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("%w: role does not exist", ErrInvalidAppRole)
-	}
+func grantAndVerify(ctx context.Context, tx pgx.Tx, cfg MigrateConfig) error {
+	role, err := beginMigration(ctx, tx, cfg)
 	if err != nil {
 		return err
 	}
-	switch {
-	case super:
-		return fmt.Errorf("%w: role is a superuser", ErrInvalidAppRole)
-	case bypass:
-		return fmt.Errorf("%w: role bypasses row level security", ErrInvalidAppRole)
-	case isSelf || member:
-		return fmt.Errorf("%w: role is the migration role or a member of it", ErrInvalidAppRole)
-	case owns:
-		return fmt.Errorf("%w: role owns objects in the iam schema", ErrInvalidAppRole)
+	if _, err := tx.Exec(ctx, "GRANT USAGE ON SCHEMA iam TO "+pgx.Identifier{cfg.AppRole}.Sanitize()); err != nil {
+		return err
 	}
-	return nil
+	return verifyPrivileges(ctx, tx, role)
 }

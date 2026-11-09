@@ -20,3 +20,9 @@ File keys are the lower-case variable names without the `IAM_` prefix.
 | `IAM_ARGON2_ITERATIONS` | `argon2_iterations` | integer | `2` | no | Argon2id iteration count. Below 2 raises a critical alert. |
 | `IAM_ARGON2_PARALLELISM` | `argon2_parallelism` | integer | `1` | no | Argon2id degree of parallelism. |
 | `IAM_ARGON2_MAX_CONCURRENT` | `argon2_max_concurrent` | integer | `2` | no | Maximum password hashes computed at the same time (bounds memory use). |
+| `IAM_DATABASE_STATEMENT_TIMEOUT` | `database_statement_timeout` | duration | `5s` | no | Longest statement the service runs (Postgres statement_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_IDLE_IN_TRANSACTION_TIMEOUT` | `database_idle_in_transaction_timeout` | duration | `10s` | no | Longest a service transaction may sit idle (Postgres idle_in_transaction_session_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_LOCK_TIMEOUT` | `database_lock_timeout` | duration | `2s` | no | Longest a service statement waits for a lock (Postgres lock_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_MAX_CONN_IDLE_TIME` | `database_max_conn_idle_time` | duration | `1m` | no | An idle pooled connection is closed after this long, freeing it on the shared instance. Between 1ms and 1h. |
+| `IAM_MIGRATION_STATEMENT_TIMEOUT` | `migration_statement_timeout` | duration | `5m` | no | Longest statement of iam migrate. Between 1ms and 1h. |
+| `IAM_MIGRATION_LOCK_TIMEOUT` | `migration_lock_timeout` | duration | `30s` | no | Longest iam migrate waits for a lock, the migration lock included. Between 1ms and 1h. |

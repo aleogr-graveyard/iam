@@ -99,3 +99,22 @@ func TestNewWithAppRole_DropsRoleOnCleanup(t *testing.T) {
 		t.Fatalf("role %q still exists after cleanup", role)
 	}
 }
+
+func TestNewRole_CreatesAndDrops(t *testing.T) {
+	var role string
+	t.Run("sub", func(t *testing.T) {
+		role = testdb.NewRole(t, "NOLOGIN BYPASSRLS")
+		var bypass bool
+		err := connect(t, testdb.AdminURL(t)).QueryRow(context.Background(),
+			"SELECT rolbypassrls FROM pg_roles WHERE rolname = $1", role).Scan(&bypass)
+		if err != nil || !bypass || !strings.HasPrefix(role, "iam_test_app_") {
+			t.Fatalf("role %q: bypassrls %v, %v", role, bypass, err)
+		}
+	})
+	var exists bool
+	err := connect(t, testdb.AdminURL(t)).QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).Scan(&exists)
+	if err != nil || exists {
+		t.Fatalf("role %q still exists after cleanup (%v)", role, err)
+	}
+}

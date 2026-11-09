@@ -3,6 +3,8 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -93,7 +95,7 @@ func setting(t *testing.T, ctx context.Context, q querier) (tenant string, backe
 
 func TestRLS_BlocksQueryWithoutTenantFilter(t *testing.T) {
 	f := newFixture(t)
-	store := postgres.NewStore(appPool(t, migratedDB(t)))
+	store := newStore(t, appPool(t, migratedDB(t)))
 	a, b := f.seed(store, "tenant-a"), f.seed(store, "tenant-b")
 	for _, tenant := range []ids.TenantID{a.tenant, b.tenant} {
 		rawInTenant(t, store, tenant, func(ctx context.Context, raw pgx.Tx) {
@@ -115,7 +117,7 @@ func TestRLS_SettingDoesNotLeakAcrossTransactions(t *testing.T) {
 	f := newFixture(t)
 	db := migratedDB(t)
 	pool := singleConnPool(t, db)
-	store := postgres.NewStore(pool)
+	store := newStore(t, pool)
 	a := f.seed(store, "tenant-a")
 	var inside int
 	rawInTenant(t, store, a.tenant, func(ctx context.Context, raw pgx.Tx) {
@@ -150,7 +152,7 @@ func TestRLS_SettingDoesNotLeakAcrossTransactions(t *testing.T) {
 
 func TestRLS_InSystemResetsTenantAfterInTenant(t *testing.T) {
 	f := newFixture(t)
-	store := postgres.NewStore(singleConnPool(t, migratedDB(t)))
+	store := newStore(t, singleConnPool(t, migratedDB(t)))
 	a := f.seed(store, "tenant-a")
 	var backend int
 	check := func(wantSetting string, wantUsers int) {
@@ -186,7 +188,7 @@ func TestRLS_InSystemResetsTenantAfterInTenant(t *testing.T) {
 
 func TestRLS_WithCheckRefusesForeignTenantInsert(t *testing.T) {
 	f := newFixture(t)
-	store := postgres.NewStore(appPool(t, migratedDB(t)))
+	store := newStore(t, appPool(t, migratedDB(t)))
 	a, b := f.seed(store, "tenant-a"), f.seed(store, "tenant-b")
 	bt := b.tenant.String()
 	statements := map[string][]any{
@@ -194,8 +196,6 @@ func TestRLS_WithCheckRefusesForeignTenantInsert(t *testing.T) {
 		"INSERT INTO iam.users VALUES ($1, $2, 'bia@example.com', false, 'active', now())":                   {f.id().String(), bt},
 		"INSERT INTO iam.memberships VALUES ($1, $2, $3, now())":                                             {bt, b.org.String(), b.user.String()},
 		"INSERT INTO iam.applications VALUES ($1, $2, 'X', 'public', '{https://x.example/cb}', NULL, now())": {f.id().String(), bt},
-		"UPDATE iam.users SET tenant_id = $1 WHERE id = $2":                                                  {bt, a.user.String()},
-		"UPDATE iam.organizations SET tenant_id = $1 WHERE id = $2":                                          {bt, a.org.String()},
 	}
 	rawInTenant(t, store, a.tenant, func(ctx context.Context, raw pgx.Tx) {
 		for sql, args := range statements {
@@ -205,20 +205,18 @@ func TestRLS_WithCheckRefusesForeignTenantInsert(t *testing.T) {
 			}
 			_, err = sp.Exec(ctx, sql, args...)
 			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || pgErr.Code != codeInsufficientPrivilege {
+			// The privilege error has the same code: the message tells the
+			// policy apart.
+			if !errors.As(err, &pgErr) || pgErr.Code != codeInsufficientPrivilege || !strings.Contains(pgErr.Message, "row-level security") {
 				t.Errorf("%s: error %v, want the RLS refusal (42501)", sql, err)
 			}
 			_ = sp.Rollback(ctx)
 		}
-		// B's rows can be neither changed nor deleted from A: they do not match.
-		for _, sql := range []string{
-			"UPDATE iam.users SET email_verified = true WHERE id = $1",
-			"DELETE FROM iam.users WHERE id = $1",
-		} {
-			tag, err := raw.Exec(ctx, sql, b.user.String())
-			if err != nil || tag.RowsAffected() != 0 {
-				t.Errorf("%s on B's user from A: %d rows, %v; want 0 rows", sql, tag.RowsAffected(), err)
-			}
+		// B's membership cannot be deleted from A (DELETE is granted only on
+		// memberships): it does not match.
+		tag, err := raw.Exec(ctx, "DELETE FROM iam.memberships WHERE user_id = $1", b.user.String())
+		if err != nil || tag.RowsAffected() != 0 {
+			t.Errorf("DELETE of B's membership from A: %d rows, %v; want 0 rows", tag.RowsAffected(), err)
 		}
 	})
 	rawInTenant(t, store, b.tenant, func(ctx context.Context, raw pgx.Tx) {
@@ -251,21 +249,23 @@ func TestRLS_AppRoleOwnsNothingAndRLSIsForced(t *testing.T) {
 	}
 }
 
-func TestRLS_AppRoleHasOnlyDML(t *testing.T) {
+// TestRLS_AppRoleHasLeastPrivilege: exactly what the store uses. Later
+// features widen it through expand migrations.
+func TestRLS_AppRoleHasLeastPrivilege(t *testing.T) {
 	app := connect(t, migratedDB(t).AppURL)
 	ctx := t.Context()
-	privileges := map[string]bool{
-		"SELECT": true, "INSERT": true, "UPDATE": true, "DELETE": true,
-		"TRUNCATE": false, "REFERENCES": false, "TRIGGER": false,
+	want := map[string][]string{
+		"tenants": {"SELECT", "INSERT"}, "organizations": {"SELECT", "INSERT"}, "users": {"SELECT", "INSERT"},
+		"applications": {"SELECT", "INSERT"}, "memberships": {"SELECT", "INSERT", "DELETE"}, "schema_migrations": nil,
 	}
-	for _, table := range append([]string{"tenants"}, tenantTables...) {
-		for priv, want := range privileges {
+	for table, granted := range want {
+		for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
 			var has bool
 			if err := app.QueryRow(ctx, "SELECT has_table_privilege($1, $2)", "iam."+table, priv).Scan(&has); err != nil {
 				t.Fatalf("privilege: %v", err)
 			}
-			if has != want {
-				t.Errorf("app role has %s on %s: %v, want %v", priv, table, has, want)
+			if has != slices.Contains(granted, priv) {
+				t.Errorf("app role has %s on %s: %v, want %v", priv, table, has, !has)
 			}
 		}
 	}
@@ -273,6 +273,22 @@ func TestRLS_AppRoleHasOnlyDML(t *testing.T) {
 	err := app.QueryRow(ctx, "SELECT has_schema_privilege('iam', 'USAGE'), has_schema_privilege('iam', 'CREATE')").Scan(&usage, &create)
 	if err != nil || !usage || create {
 		t.Errorf("schema iam: USAGE %v, CREATE %v (%v); want USAGE only", usage, create, err)
+	}
+}
+
+// The tenant registry, which has no RLS, cannot be changed or emptied by the
+// app role.
+func TestRLS_TenantsUpdateAndDeleteRefused(t *testing.T) {
+	f := newFixture(t)
+	db := migratedDB(t)
+	f.seed(newStore(t, appPool(t, db)), "tenant-a")
+	app := connect(t, db.AppURL)
+	for _, sql := range []string{"UPDATE iam.tenants SET status = 'suspended'", "DELETE FROM iam.tenants"} {
+		_, err := app.Exec(t.Context(), sql)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != codeInsufficientPrivilege {
+			t.Errorf("%s: error %v, want insufficient privilege (42501)", sql, err)
+		}
 	}
 }
 
@@ -290,7 +306,7 @@ func TestRLS_AppRoleCannotAlterDropOrDisableRLS(t *testing.T) {
 		"TRUNCATE iam.users",
 		"CREATE TABLE iam.x (id int)",
 		"SELECT count(*) FROM iam.schema_migrations",
-		"INSERT INTO iam.schema_migrations VALUES ('x', now())",
+		`INSERT INTO iam.schema_migrations VALUES ('x', '\x00', now())`,
 	} {
 		_, err := app.Exec(ctx, sql)
 		var pgErr *pgconn.PgError

@@ -50,7 +50,7 @@ func sanitize(err error) error {
 		return &dbError{msg: "postgres: database error (SQLSTATE " + pgErr.Code + ")", cause: err}
 	case errors.As(err, &connErr):
 		return &dbError{msg: "postgres: cannot connect to the database", cause: err}
-	case errors.Is(err, ErrInvalidAppRole), errors.Is(err, ErrCorrupt):
+	case errors.Is(err, ErrInvalidAppRole), errors.Is(err, ErrCorrupt), errors.Is(err, ErrMigrationChanged):
 		return err // fixed texts of this package
 	}
 	return &dbError{msg: "postgres: database error", cause: err}

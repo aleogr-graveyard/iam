@@ -1,16 +1,17 @@
 package postgres_test
 
 import (
+	"context"
 	"errors"
-	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aleogr/iam/adapters/postgres"
 	"github.com/aleogr/iam/internal/database"
@@ -43,16 +44,6 @@ func embeddedVersions(t *testing.T) []string {
 	return v
 }
 
-func migrate(t *testing.T, url, role string) error {
-	t.Helper()
-	pool, err := database.OpenMigrator(t.Context(), url)
-	if err != nil {
-		t.Fatalf("OpenMigrator: %v", err)
-	}
-	defer pool.Close()
-	return postgres.Migrate(t.Context(), pool, role)
-}
-
 func TestMigrate_IsIdempotent(t *testing.T) {
 	db := migratedDB(t)
 	conn := connect(t, db.AdminURL)
@@ -81,12 +72,12 @@ func TestMigrate_ConcurrentRunsSerialize(t *testing.T) {
 	errs := make([]error, runs)
 	pools := make([]func() error, runs)
 	for i := range runs {
-		pool, err := database.OpenMigrator(t.Context(), db.AdminURL)
+		pool, err := database.OpenMigrator(t.Context(), db.AdminURL, testdb.Limits())
 		if err != nil {
 			t.Fatalf("OpenMigrator: %v", err)
 		}
 		defer pool.Close()
-		pools[i] = func() error { return postgres.Migrate(t.Context(), pool, db.AppRole) }
+		pools[i] = func() error { return postgres.Migrate(t.Context(), pool, migrateConfig(db.AppRole)) }
 	}
 	var wg sync.WaitGroup
 	for i := range runs {
@@ -109,45 +100,9 @@ func TestMigrate_RejectsBadRoleName(t *testing.T) {
 		"", "iam", "app", "postgres", "IAM_APP", "iam-app", "iam app", `iam_app"`, "iam_app; DROP TABLE x",
 		"iam_ä", "iam_" + strings.Repeat("a", 60), "1iam_app", "pg_iam_app",
 	} {
-		if err := postgres.Migrate(t.Context(), nil, name); !errors.Is(err, postgres.ErrInvalidAppRole) {
+		if err := postgres.Migrate(t.Context(), nil, migrateConfig(name)); !errors.Is(err, postgres.ErrInvalidAppRole) {
 			t.Errorf("Migrate(%q) = %v, want ErrInvalidAppRole", name, err)
 		}
-	}
-}
-
-// TestMigrate_RefusesPrivilegedAppRole: an app role that could get around
-// RLS or the ownership rules is refused, and nothing is applied.
-func TestMigrate_RefusesPrivilegedAppRole(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		setup func(role string) string
-	}{
-		{"missing", func(string) string { return "" }},
-		{"superuser", func(role string) string { return "ALTER ROLE " + role + " SUPERUSER" }},
-		{"bypassrls", func(role string) string { return "ALTER ROLE " + role + " BYPASSRLS" }},
-		{"member of the migrator", func(role string) string {
-			return "DO $$ BEGIN EXECUTE format('GRANT %I TO %s', current_user, '" + role + "'); END $$"
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			db := testdb.NewWithAppRole(t)
-			role := db.AppRole
-			if sql := tc.setup(pgx.Identifier{role}.Sanitize()); sql != "" {
-				if _, err := connect(t, db.AdminURL).Exec(t.Context(), sql); err != nil {
-					t.Fatalf("setup: %v", err)
-				}
-			} else {
-				role = fmt.Sprintf("iam_test_app_%d_missing", os.Getpid())
-			}
-			err := migrate(t, db.AdminURL, role)
-			if !errors.Is(err, postgres.ErrInvalidAppRole) {
-				t.Fatalf("Migrate = %v, want ErrInvalidAppRole", err)
-			}
-			var exists bool
-			if err := connect(t, db.AdminURL).QueryRow(t.Context(), "SELECT to_regclass('iam.tenants') IS NOT NULL").Scan(&exists); err != nil || exists {
-				t.Fatalf("iam.tenants exists after a refused run (%v)", err)
-			}
-		})
 	}
 }
 
@@ -183,5 +138,91 @@ func TestMigrations_AreTimestampNamed(t *testing.T) {
 	})
 	if err != nil || !slices.Equal(got, []string{"20261107000000_a", "20261108000000_b"}) {
 		t.Errorf("versions = %v, %v; want name order", got, err)
+	}
+}
+
+// TestMigrate_RefusesEditedMigration: every applied version keeps the
+// checksum of its file, and a run against a database where an applied
+// migration differs from the embedded one fails.
+func TestMigrate_RefusesEditedMigration(t *testing.T) {
+	db := migratedDB(t)
+	var n int
+	err := connect(t, db.AdminURL).QueryRow(t.Context(),
+		"SELECT count(*) FROM iam.schema_migrations WHERE length(checksum) = 32").Scan(&n)
+	if err != nil || n != len(embeddedVersions(t)) {
+		t.Fatalf("%d versions carry a SHA-256 checksum (%v), want %d", n, err, len(embeddedVersions(t)))
+	}
+	adminExec(t, db, `UPDATE iam.schema_migrations SET checksum = '\x00'`)
+	if err := migrate(t, db.AdminURL, db.AppRole); !errors.Is(err, postgres.ErrMigrationChanged) {
+		t.Fatalf("Migrate = %v, want ErrMigrationChanged", err)
+	}
+}
+
+// TestMigrate_VerifiesAppRolePrivileges: after migrating, the app role must
+// reach exactly the expected privileges; an extra grant or a different app
+// role (IAM_DATABASE_APP_ROLE changed after the grants were made) fails.
+func TestMigrate_VerifiesAppRolePrivileges(t *testing.T) {
+	t.Run("extra grant", func(t *testing.T) {
+		db := migratedDB(t)
+		adminExec(t, db, "GRANT UPDATE ON iam.users TO "+quote(db.AppRole))
+		if err := migrate(t, db.AdminURL, db.AppRole); !errors.Is(err, postgres.ErrInvalidAppRole) {
+			t.Fatalf("Migrate = %v, want ErrInvalidAppRole", err)
+		}
+	})
+	t.Run("grant through a member role", func(t *testing.T) {
+		db := migratedDB(t)
+		r := testdb.NewRole(t, "NOLOGIN")
+		adminExec(t, db, "GRANT TRUNCATE ON iam.tenants TO "+quote(r), "GRANT "+quote(r)+" TO "+quote(db.AppRole))
+		t.Cleanup(func() { adminExec(t, db, "REVOKE ALL ON iam.tenants FROM "+quote(r)) })
+		if err := migrate(t, db.AdminURL, db.AppRole); !errors.Is(err, postgres.ErrInvalidAppRole) {
+			t.Fatalf("Migrate = %v, want ErrInvalidAppRole", err)
+		}
+	})
+	t.Run("changed app role", func(t *testing.T) {
+		db := migratedDB(t)
+		other := testdb.NewRole(t, "NOLOGIN")
+		if err := migrate(t, db.AdminURL, other); !errors.Is(err, postgres.ErrInvalidAppRole) {
+			t.Fatalf("Migrate with another role = %v, want ErrInvalidAppRole", err)
+		}
+	})
+}
+
+// TestMigrate_LockTimeout: a migration that cannot get the migration lock
+// gives up after the configured lock timeout instead of waiting forever.
+func TestMigrate_LockTimeout(t *testing.T) {
+	db := migratedDB(t)
+	holder := connect(t, db.AdminURL)
+	if _, err := holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", int64(postgres.MigrationLockKey)); err != nil {
+		t.Fatalf("hold the lock: %v", err)
+	}
+	// The pool's own lock_timeout is long, so only the per-transaction
+	// setting can end the wait in time.
+	limits := testdb.Limits()
+	limits.LockTimeout = time.Minute
+	pool, err := database.OpenMigrator(t.Context(), db.AdminURL, limits)
+	if err != nil {
+		t.Fatalf("OpenMigrator: %v", err)
+	}
+	defer pool.Close()
+	cfg := migrateConfig(db.AppRole)
+	cfg.LockTimeout = 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	err = postgres.Migrate(ctx, pool, cfg)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("Migrate = %v, want lock_not_available (55P03)", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Migrate gave up after %v", elapsed)
+	}
+}
+
+func TestMigrate_RefusesMissingTimeouts(t *testing.T) {
+	cfg := migrateConfig("iam_app")
+	cfg.StatementTimeout = 0
+	if err := postgres.Migrate(t.Context(), nil, cfg); err == nil {
+		t.Fatal("Migrate accepted a zero statement timeout")
 	}
 }

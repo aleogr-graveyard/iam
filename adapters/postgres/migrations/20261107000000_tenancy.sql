@@ -2,7 +2,8 @@
 --
 -- Applied by Migrate as the migration role, which owns everything created
 -- here. {{app_role}} is replaced with the quoted name of the service's role,
--- which gets USAGE on the schema and DML on the tables, and owns nothing.
+-- which gets the grants at the end (Migrate grants USAGE on the schema) and
+-- owns nothing.
 -- This is the first migration; every later one must be backward compatible
 -- with the running code (expand/contract).
 --
@@ -97,8 +98,10 @@ CREATE POLICY tenant_isolation ON iam.applications
     USING (tenant_id = NULLIF(current_setting('iam.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('iam.tenant_id', true), '')::uuid);
 
--- The tenant registry has no tenant_id and no row level security: it is
--- reachable only through Store.InSystem.
-GRANT SELECT, INSERT, UPDATE, DELETE ON
-    iam.tenants, iam.organizations, iam.users, iam.memberships, iam.applications
-    TO {{app_role}};
+-- Least privilege: exactly what the store uses (appPrivileges in roles.go,
+-- which Migrate verifies after every run). Later features widen it with
+-- their own expand migrations. The tenant registry has no tenant_id and no
+-- row level security: it is reachable only through Store.InSystem, and the
+-- app role can neither change nor delete its rows.
+GRANT SELECT, INSERT ON iam.tenants, iam.organizations, iam.users, iam.applications TO {{app_role}};
+GRANT SELECT, INSERT, DELETE ON iam.memberships TO {{app_role}};

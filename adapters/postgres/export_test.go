@@ -33,3 +33,6 @@ var EmbeddedMigrations fs.FS = migrationFiles
 
 // Sanitize is the driver-error filter of every returned error.
 var Sanitize = sanitize
+
+// WriteError maps a failed write.
+var WriteError = writeError

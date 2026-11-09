@@ -35,9 +35,16 @@ func (tx *tenantTx) Users() storage.UserRepo                 { return userRepo{t
 func (tx *tenantTx) Memberships() storage.MembershipRepo     { return memberRepo{tx} }
 func (tx *tenantTx) Applications() storage.ApplicationRepo   { return appRepo{tx} }
 
-// createKeyed stores v in the index pick selects, in the Tx's tenant, refusing
-// an ID that any tenant already holds or a duplicate key.
-func createKeyed[V any](tx *tenantTx, pick func(*tenantData) keyed[V], id ids.ID, key string, v V) error {
+// createKeyed validates v (its tenant and time already forced by the caller)
+// and stores it in the index pick selects, in the Tx's tenant, refusing an ID
+// that any tenant already holds or a duplicate key.
+func createKeyed[V any](ctx context.Context, tx *tenantTx, validate func() error, pick func(*tenantData) keyed[V], id ids.ID, key string, v V) error {
+	if err := tx.check(ctx); err != nil {
+		return err
+	}
+	if err := validate(); err != nil {
+		return storage.Invalid(err)
+	}
 	idx := pick(tx.data)
 	if tx.takenElsewhere(func(d *tenantData) bool { _, ok := pick(d).byID[id]; return ok }) {
 		return conflict(idx.entity, "id")
@@ -50,14 +57,8 @@ func createKeyed[V any](tx *tenantTx, pick func(*tenantData) keyed[V], id ids.ID
 type orgRepo struct{ tx *tenantTx }
 
 func (r orgRepo) Create(ctx context.Context, o tenancy.Organization) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	o.TenantID = r.tx.tenant
-	if err := o.Validate(); err != nil {
-		return storage.Invalid(err)
-	}
-	return createKeyed(r.tx, func(d *tenantData) keyed[tenancy.Organization] { return d.orgs }, o.ID.ID, o.Slug, o)
+	o.TenantID, o.CreatedAt = r.tx.tenant, storage.Microseconds(o.CreatedAt)
+	return createKeyed(ctx, r.tx, o.Validate, func(d *tenantData) keyed[tenancy.Organization] { return d.orgs }, o.ID.ID, o.Slug, o)
 }
 
 func (r orgRepo) Get(ctx context.Context, id ids.OrganizationID) (tenancy.Organization, error) {
@@ -87,14 +88,8 @@ func (r orgRepo) List(ctx context.Context, after ids.OrganizationID, limit int) 
 type userRepo struct{ tx *tenantTx }
 
 func (r userRepo) Create(ctx context.Context, u tenancy.User) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	u.TenantID = r.tx.tenant
-	if err := u.Validate(); err != nil {
-		return storage.Invalid(err)
-	}
-	return createKeyed(r.tx, func(d *tenantData) keyed[tenancy.User] { return d.users }, u.ID.ID, u.Email, u)
+	u.TenantID, u.CreatedAt = r.tx.tenant, storage.Microseconds(u.CreatedAt)
+	return createKeyed(ctx, r.tx, u.Validate, func(d *tenantData) keyed[tenancy.User] { return d.users }, u.ID.ID, u.Email, u)
 }
 
 func (r userRepo) Get(ctx context.Context, id ids.UserID) (tenancy.User, error) {
@@ -130,7 +125,7 @@ func (r memberRepo) Add(ctx context.Context, m tenancy.Membership) error {
 	if err := r.tx.check(ctx); err != nil {
 		return err
 	}
-	m.TenantID = r.tx.tenant
+	m.TenantID, m.CreatedAt = r.tx.tenant, storage.Microseconds(m.CreatedAt)
 	if err := m.Validate(); err != nil {
 		return storage.Invalid(err)
 	}
@@ -185,7 +180,7 @@ func (r appRepo) Create(ctx context.Context, a tenancy.Application) error {
 	if err := r.tx.check(ctx); err != nil {
 		return err
 	}
-	a.TenantID = r.tx.tenant
+	a.TenantID, a.CreatedAt = r.tx.tenant, storage.Microseconds(a.CreatedAt)
 	if err := a.Validate(r.tx.allowInsecureHTTP); err != nil {
 		return storage.Invalid(err)
 	}

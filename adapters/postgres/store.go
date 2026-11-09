@@ -72,13 +72,19 @@ func WithAllowInsecureHTTP(allow bool) Option {
 }
 
 // NewStore returns a Store over pool, which must connect as the service's
-// role (the app role given to Migrate).
-func NewStore(pool *pgxpool.Pool, opts ...Option) *Store {
+// role (the app role given to Migrate) or a login role that is a member of
+// it. It fails closed (ErrInvalidAppRole) when that role is, or can become,
+// a superuser, a BYPASSRLS role or an owner of anything in the iam schema:
+// such a role would get around row level security, whatever Migrate checked.
+func NewStore(ctx context.Context, pool *pgxpool.Pool, opts ...Option) (*Store, error) {
+	if err := checkConnectionRole(ctx, pool); err != nil {
+		return nil, err
+	}
 	s := &Store{pool: pool}
 	for _, o := range opts {
 		o(s)
 	}
-	return s
+	return s, nil
 }
 
 // setTenantSQL sets iam.tenant_id only when the tenant exists: no row means
@@ -250,5 +256,24 @@ func queryAll[T any](ctx context.Context, c *txConn, scan scanner[T], sql string
 // row, so a lookup with it finds nothing.
 func uuidArg(id ids.ID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 
-// fromUUID converts a scanned non-null uuid column.
-func fromUUID(u pgtype.UUID) ids.ID { return ids.ID(u.Bytes) }
+// idDest scans a non-null uuid column into an ID.
+type idDest struct{ id *ids.ID }
+
+func (d idDest) ScanUUID(v pgtype.UUID) error {
+	if !v.Valid {
+		return errors.New("postgres: null uuid")
+	}
+	*d.id = v.Bytes
+	return nil
+}
+
+// utcDest scans a timestamptz into a time.Time in UTC.
+type utcDest struct{ t *time.Time }
+
+func (d utcDest) ScanTimestamptz(v pgtype.Timestamptz) error {
+	if !v.Valid || v.InfinityModifier != pgtype.Finite {
+		return errors.New("postgres: null or infinite timestamp")
+	}
+	*d.t = v.Time.UTC()
+	return nil
+}

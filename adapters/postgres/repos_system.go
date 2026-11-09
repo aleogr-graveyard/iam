@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/aleogr/iam/shared/clock"
 	"github.com/aleogr/iam/shared/ids"
@@ -20,12 +19,10 @@ type systemTx struct{ txConn }
 const tenantColumns = "id, slug, name, status, created_at"
 
 func scanTenant(row pgx.Row) (tenancy.Tenant, error) {
-	var id pgtype.UUID
 	var t tenancy.Tenant
-	if err := row.Scan(&id, &t.Slug, &t.Name, &t.Status, &t.CreatedAt); err != nil {
+	if err := row.Scan(idDest{&t.ID.ID}, &t.Slug, &t.Name, &t.Status, utcDest{&t.CreatedAt}); err != nil {
 		return tenancy.Tenant{}, err
 	}
-	t.ID, t.CreatedAt = ids.TenantID{ID: fromUUID(id)}, t.CreatedAt.UTC()
 	// ValidateStored: the system tenant, created by NewSystemTenant, is a
 	// valid stored row although Validate refuses its slug.
 	if err := t.ValidateStored(); err != nil {
@@ -47,6 +44,7 @@ func (tx *systemTx) CreateTenant(ctx context.Context, t tenancy.Tenant) error {
 	if err := t.Validate(); err != nil {
 		return storage.Invalid(err)
 	}
+	t.CreatedAt = storage.Microseconds(t.CreatedAt)
 	_, err := tx.write(ctx, "tenant", insertTenantSQL, tenantArgs(t)...)
 	return err
 }
@@ -65,6 +63,7 @@ func (tx *systemTx) EnsureSystemTenant(ctx context.Context, id ids.TenantID, nam
 	if err != nil {
 		return tenancy.Tenant{}, storage.Invalid(err)
 	}
+	t.CreatedAt = storage.Microseconds(t.CreatedAt)
 	if _, err := tx.write(ctx, "tenant", insertTenantSQL+" ON CONFLICT (slug) DO NOTHING", tenantArgs(t)...); err != nil {
 		return tenancy.Tenant{}, err
 	}

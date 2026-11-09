@@ -60,12 +60,19 @@ func migrate(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 		return errors.New("migrate: IAM_DATABASE_URL is not set")
 	}
 	log.Info("iam migrating", "version", version)
-	pool, err := database.OpenMigrator(ctx, cfg.DatabaseURL)
+	d := cfg.Database
+	pool, err := database.OpenMigrator(ctx, cfg.DatabaseURL, database.Limits{
+		StatementTimeout: d.MigrationStatementTimeout, IdleInTransactionTimeout: d.IdleInTransactionTimeout,
+		LockTimeout: d.MigrationLockTimeout, MaxConnIdleTime: d.MaxConnIdleTime,
+	})
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	if err := postgres.Migrate(ctx, pool, cfg.DatabaseAppRole); err != nil {
+	err = postgres.Migrate(ctx, pool, postgres.MigrateConfig{
+		AppRole: cfg.DatabaseAppRole, StatementTimeout: d.MigrationStatementTimeout, LockTimeout: d.MigrationLockTimeout,
+	})
+	if err != nil {
 		return err
 	}
 	log.Info("iam migrations applied")
@@ -77,7 +84,11 @@ func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 
 	var opts []httpserver.Option
 	if cfg.DatabaseURL != "" {
-		pool, err := database.Open(ctx, cfg.DatabaseURL)
+		d := cfg.Database
+		pool, err := database.Open(ctx, cfg.DatabaseURL, database.Limits{
+			StatementTimeout: d.StatementTimeout, IdleInTransactionTimeout: d.IdleInTransactionTimeout,
+			LockTimeout: d.LockTimeout, MaxConnIdleTime: d.MaxConnIdleTime,
+		})
 		if err != nil {
 			return err
 		}

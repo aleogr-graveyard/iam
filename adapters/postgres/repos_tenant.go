@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/aleogr/iam/shared/ids"
 	"github.com/aleogr/iam/shared/storage"
@@ -28,13 +27,34 @@ func (tx *tenantTx) Applications() storage.ApplicationRepo   { return appRepo{tx
 
 var errForeignRow = errors.New("row of another tenant")
 
-// own checks that a row read back belongs to the Tx's tenant: a third check,
-// after the query filter and RLS, that costs nothing.
-func (tx *tenantTx) own(entity string, got ids.TenantID) error {
-	if got != tx.tenant {
-		return corrupt(entity, errForeignRow)
+// insert validates a row (its tenant and time already forced by the caller)
+// and inserts it.
+func insert(ctx context.Context, tx *tenantTx, entity string, validate func() error, sql string, args ...any) error {
+	if err := tx.check(ctx); err != nil {
+		return err
 	}
-	return nil
+	if err := validate(); err != nil {
+		return storage.Invalid(err)
+	}
+	_, err := tx.write(ctx, entity, sql, args...)
+	return err
+}
+
+// scanRow reads one row into dest and checks the value it filled: it must be
+// valid and belong to the Tx's tenant (a third check, after the query filter
+// and RLS, that costs nothing). Neither failure is ever skipped: ErrCorrupt.
+func scanRow[T any](tx *tenantTx, row pgx.Row, entity string, v *T, tenant *ids.TenantID, validate func(T) error, dest ...any) (T, error) {
+	var zero T
+	if err := row.Scan(dest...); err != nil {
+		return zero, err
+	}
+	if err := validate(*v); err != nil {
+		return zero, corrupt(entity, err)
+	}
+	if *tenant != tx.tenant {
+		return zero, corrupt(entity, errForeignRow)
+	}
+	return *v, nil
 }
 
 // getByID reads the row of table with id, in the Tx's tenant.
@@ -65,30 +85,16 @@ type orgRepo struct{ tx *tenantTx }
 const orgColumns = "id, tenant_id, slug, name, created_at"
 
 func (r orgRepo) scan(row pgx.Row) (tenancy.Organization, error) {
-	var id, tenant pgtype.UUID
 	var o tenancy.Organization
-	if err := row.Scan(&id, &tenant, &o.Slug, &o.Name, &o.CreatedAt); err != nil {
-		return tenancy.Organization{}, err
-	}
-	o.ID, o.TenantID, o.CreatedAt = ids.OrganizationID{ID: fromUUID(id)}, ids.TenantID{ID: fromUUID(tenant)}, o.CreatedAt.UTC()
-	if err := o.Validate(); err != nil {
-		return tenancy.Organization{}, corrupt("organization", err)
-	}
-	return o, r.tx.own("organization", o.TenantID)
+	return scanRow(r.tx, row, "organization", &o, &o.TenantID, tenancy.Organization.Validate,
+		idDest{&o.ID.ID}, idDest{&o.TenantID.ID}, &o.Slug, &o.Name, utcDest{&o.CreatedAt})
 }
 
 func (r orgRepo) Create(ctx context.Context, o tenancy.Organization) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	o.TenantID = r.tx.tenant
-	if err := o.Validate(); err != nil {
-		return storage.Invalid(err)
-	}
-	_, err := r.tx.write(ctx, "organization",
+	o.TenantID, o.CreatedAt = r.tx.tenant, storage.Microseconds(o.CreatedAt)
+	return insert(ctx, r.tx, "organization", o.Validate,
 		"INSERT INTO iam.organizations ("+orgColumns+") VALUES ($1, $2, $3, $4, $5)",
 		uuidArg(o.ID.ID), uuidArg(o.TenantID.ID), o.Slug, o.Name, o.CreatedAt)
-	return err
 }
 
 func (r orgRepo) Get(ctx context.Context, id ids.OrganizationID) (tenancy.Organization, error) {
@@ -120,30 +126,16 @@ type userRepo struct{ tx *tenantTx }
 const userColumns = "id, tenant_id, email, email_verified, status, created_at"
 
 func (r userRepo) scan(row pgx.Row) (tenancy.User, error) {
-	var id, tenant pgtype.UUID
 	var u tenancy.User
-	if err := row.Scan(&id, &tenant, &u.Email, &u.EmailVerified, &u.Status, &u.CreatedAt); err != nil {
-		return tenancy.User{}, err
-	}
-	u.ID, u.TenantID, u.CreatedAt = ids.UserID{ID: fromUUID(id)}, ids.TenantID{ID: fromUUID(tenant)}, u.CreatedAt.UTC()
-	if err := u.Validate(); err != nil {
-		return tenancy.User{}, corrupt("user", err)
-	}
-	return u, r.tx.own("user", u.TenantID)
+	return scanRow(r.tx, row, "user", &u, &u.TenantID, tenancy.User.Validate,
+		idDest{&u.ID.ID}, idDest{&u.TenantID.ID}, &u.Email, &u.EmailVerified, &u.Status, utcDest{&u.CreatedAt})
 }
 
 func (r userRepo) Create(ctx context.Context, u tenancy.User) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	u.TenantID = r.tx.tenant
-	if err := u.Validate(); err != nil {
-		return storage.Invalid(err)
-	}
-	_, err := r.tx.write(ctx, "user",
+	u.TenantID, u.CreatedAt = r.tx.tenant, storage.Microseconds(u.CreatedAt)
+	return insert(ctx, r.tx, "user", u.Validate,
 		"INSERT INTO iam.users ("+userColumns+") VALUES ($1, $2, $3, $4, $5, $6)",
 		uuidArg(u.ID.ID), uuidArg(u.TenantID.ID), u.Email, u.EmailVerified, string(u.Status), u.CreatedAt)
-	return err
 }
 
 func (r userRepo) Get(ctx context.Context, id ids.UserID) (tenancy.User, error) {
@@ -174,34 +166,19 @@ type memberRepo struct{ tx *tenantTx }
 const memberColumns = "tenant_id, organization_id, user_id, created_at"
 
 func (r memberRepo) scan(row pgx.Row) (tenancy.Membership, error) {
-	var tenant, org, user pgtype.UUID
 	var m tenancy.Membership
-	if err := row.Scan(&tenant, &org, &user, &m.CreatedAt); err != nil {
-		return tenancy.Membership{}, err
-	}
-	m.TenantID, m.OrganizationID, m.UserID = ids.TenantID{ID: fromUUID(tenant)}, ids.OrganizationID{ID: fromUUID(org)}, ids.UserID{ID: fromUUID(user)}
-	m.CreatedAt = m.CreatedAt.UTC()
-	if err := m.Validate(); err != nil {
-		return tenancy.Membership{}, corrupt("membership", err)
-	}
-	return m, r.tx.own("membership", m.TenantID)
+	return scanRow(r.tx, row, "membership", &m, &m.TenantID, tenancy.Membership.Validate,
+		idDest{&m.TenantID.ID}, idDest{&m.OrganizationID.ID}, idDest{&m.UserID.ID}, utcDest{&m.CreatedAt})
 }
 
 // Add relies on the composite foreign keys (tenant_id, organization_id) and
 // (tenant_id, user_id): an organization or a user of another tenant is
 // missing in this one, ErrNotFound.
 func (r memberRepo) Add(ctx context.Context, m tenancy.Membership) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	m.TenantID = r.tx.tenant
-	if err := m.Validate(); err != nil {
-		return storage.Invalid(err)
-	}
-	_, err := r.tx.write(ctx, "membership",
+	m.TenantID, m.CreatedAt = r.tx.tenant, storage.Microseconds(m.CreatedAt)
+	return insert(ctx, r.tx, "membership", m.Validate,
 		"INSERT INTO iam.memberships ("+memberColumns+") VALUES ($1, $2, $3, $4)",
 		uuidArg(m.TenantID.ID), uuidArg(m.OrganizationID.ID), uuidArg(m.UserID.ID), m.CreatedAt)
-	return err
 }
 
 func (r memberRepo) Remove(ctx context.Context, org ids.OrganizationID, user ids.UserID) error {
@@ -229,33 +206,21 @@ type appRepo struct{ tx *tenantTx }
 
 const appColumns = "id, tenant_id, name, type, redirect_uris, secret_hash, created_at"
 
-// scan validates with the Store's allowInsecureHTTP: a store that refuses
-// insecure redirect URIs does not serve a client stored with one.
+// validate uses the Store's allowInsecureHTTP, on create and on read: a store
+// that refuses insecure redirect URIs does not serve a client stored with one.
+func (r appRepo) validate(a tenancy.Application) error { return a.Validate(r.tx.allowInsecureHTTP) }
+
 func (r appRepo) scan(row pgx.Row) (tenancy.Application, error) {
-	var id, tenant pgtype.UUID
 	var a tenancy.Application
-	if err := row.Scan(&id, &tenant, &a.Name, &a.Type, &a.RedirectURIs, &a.SecretHash, &a.CreatedAt); err != nil {
-		return tenancy.Application{}, err
-	}
-	a.ID, a.TenantID, a.CreatedAt = ids.ApplicationID{ID: fromUUID(id)}, ids.TenantID{ID: fromUUID(tenant)}, a.CreatedAt.UTC()
-	if err := a.Validate(r.tx.allowInsecureHTTP); err != nil {
-		return tenancy.Application{}, corrupt("application", err)
-	}
-	return a, r.tx.own("application", a.TenantID)
+	return scanRow(r.tx, row, "application", &a, &a.TenantID, r.validate,
+		idDest{&a.ID.ID}, idDest{&a.TenantID.ID}, &a.Name, &a.Type, &a.RedirectURIs, &a.SecretHash, utcDest{&a.CreatedAt})
 }
 
 func (r appRepo) Create(ctx context.Context, a tenancy.Application) error {
-	if err := r.tx.check(ctx); err != nil {
-		return err
-	}
-	a.TenantID = r.tx.tenant
-	if err := a.Validate(r.tx.allowInsecureHTTP); err != nil {
-		return storage.Invalid(err)
-	}
-	_, err := r.tx.write(ctx, "application",
+	a.TenantID, a.CreatedAt = r.tx.tenant, storage.Microseconds(a.CreatedAt)
+	return insert(ctx, r.tx, "application", func() error { return r.validate(a) },
 		"INSERT INTO iam.applications ("+appColumns+") VALUES ($1, $2, $3, $4, $5, $6, $7)",
 		uuidArg(a.ID.ID), uuidArg(a.TenantID.ID), a.Name, string(a.Type), a.RedirectURIs, a.SecretHash, a.CreatedAt)
-	return err
 }
 
 func (r appRepo) Get(ctx context.Context, id ids.ApplicationID) (tenancy.Application, error) {

@@ -27,7 +27,24 @@ import (
 // row level security in force under the explicit tenant filters.
 func TestPostgresStore_Contract(t *testing.T) {
 	storagetest.Run(t, func(t *testing.T) storage.Store {
-		return postgres.NewStore(appPool(t, migratedDB(t)))
+		return newStore(t, appPool(t, migratedDB(t)))
+	})
+}
+
+// TestPostgresStore_ContractWithoutRLS runs the whole suite, the isolation
+// subtests included, on databases whose tenant-owned tables have row level
+// security disabled: the explicit tenant_id filter of every query must keep
+// tenants apart on its own, as RLS must on its own (rls_test.go). Either
+// barrier failing is caught by one of the two runs.
+func TestPostgresStore_ContractWithoutRLS(t *testing.T) {
+	storagetest.Run(t, func(t *testing.T) storage.Store {
+		db := migratedDB(t)
+		var sqls []string
+		for _, table := range tenantTables {
+			sqls = append(sqls, "ALTER TABLE iam."+table+" NO FORCE ROW LEVEL SECURITY", "ALTER TABLE iam."+table+" DISABLE ROW LEVEL SECURITY")
+		}
+		adminExec(t, db, sqls...)
+		return newStore(t, appPool(t, db))
 	})
 }
 
@@ -72,9 +89,9 @@ func TestStore_AllowInsecureHTTPOption(t *testing.T) {
 		store *postgres.Store
 		ok    bool
 	}{
-		{postgres.NewStore(pool), false},
-		{postgres.NewStore(pool, postgres.WithAllowInsecureHTTP(false)), false},
-		{postgres.NewStore(pool, postgres.WithAllowInsecureHTTP(true)), true},
+		{newStore(t, pool), false},
+		{newStore(t, pool, postgres.WithAllowInsecureHTTP(false)), false},
+		{newStore(t, pool, postgres.WithAllowInsecureHTTP(true)), true},
 	} {
 		tenant := f.createTenant(tc.store, fmt.Sprintf("acme-%d", i))
 		app := tenancy.Application{
@@ -98,7 +115,7 @@ func TestStore_AllowInsecureHTTPOption(t *testing.T) {
 func TestStore_CorruptRowIsAnError(t *testing.T) {
 	f := newFixture(t)
 	db := migratedDB(t)
-	store := postgres.NewStore(appPool(t, db))
+	store := newStore(t, appPool(t, db))
 	tenant := f.createTenant(store, "acme")
 	admin := connect(t, db.AdminURL) // superuser: not bound by RLS
 	orgID, userID := f.id(), f.id()
@@ -144,7 +161,7 @@ func wantCorrupt(t *testing.T, what string, err error) {
 // caller.
 func TestStore_ConflictErrorsCarryNoDriverText(t *testing.T) {
 	f := newFixture(t)
-	store := postgres.NewStore(appPool(t, migratedDB(t)))
+	store := newStore(t, appPool(t, migratedDB(t)))
 	tenant := f.createTenant(store, "acme")
 	user := func() tenancy.User {
 		return tenancy.User{ID: ids.UserID{ID: f.id()}, Email: "zq7mark@example.com", Status: tenancy.StatusActive, CreatedAt: f.now}
@@ -203,5 +220,32 @@ func TestSanitize(t *testing.T) {
 	var asPg *pgconn.PgError
 	if !errors.As(postgres.Sanitize(pgErr), &asPg) || asPg.Code != "23505" {
 		t.Error("the cause is no longer reachable with errors.As")
+	}
+}
+
+// TestWriteError covers constraint violations the schema cannot produce today:
+// an unknown unique or foreign key constraint still maps to the storage error
+// of its SQLSTATE, and any other server error to neither.
+func TestWriteError(t *testing.T) {
+	for _, tc := range []struct {
+		code, constraint string
+		is, not          error
+	}{
+		{"23505", "some_future_key", storage.ErrConflict, storage.ErrNotFound},
+		{"23503", "some_future_fkey", storage.ErrNotFound, storage.ErrConflict},
+		{"23505", "users_tenant_id_email_key", storage.ErrConflict, storage.ErrNotFound},
+		{"23503", "memberships_user_fkey", storage.ErrNotFound, storage.ErrConflict},
+		{"23514", "applications_secret_hash_check", nil, storage.ErrConflict},
+	} {
+		err := postgres.WriteError("user", &pgconn.PgError{Code: tc.code, ConstraintName: tc.constraint, Detail: "Key (x)=(zq7mark)"})
+		if tc.is != nil && !errors.Is(err, tc.is) {
+			t.Errorf("%s %s: %v, want %v", tc.code, tc.constraint, err, tc.is)
+		}
+		if errors.Is(err, tc.not) || (tc.is == nil && errors.Is(err, storage.ErrNotFound)) {
+			t.Errorf("%s %s: %v is also %v", tc.code, tc.constraint, err, tc.not)
+		}
+		if strings.Contains(err.Error(), "zq7mark") || strings.Contains(err.Error(), tc.constraint) {
+			t.Errorf("%s %s: %q leaks the driver error", tc.code, tc.constraint, err)
+		}
 	}
 }

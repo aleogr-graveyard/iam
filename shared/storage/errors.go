@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aleogr/iam/shared/tenancy"
 )
@@ -55,6 +56,10 @@ func ClampLimit(limit int) (int, error) {
 	}
 	return min(limit, MaxListLimit), nil
 }
+
+// Microseconds truncates t toward the past to the microsecond, the precision
+// at which every adapter stores times (package doc, Times).
+func Microseconds(t time.Time) time.Time { return t.Truncate(time.Microsecond) }
 
 type txKey struct{}
 

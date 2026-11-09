@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aleogr/iam/internal/database"
 	"github.com/aleogr/iam/shared/crypto"
 )
 
@@ -24,6 +25,15 @@ const (
 )
 
 var counter atomic.Uint64
+
+// Limits returns the database limits tests open pools with: the shape of the
+// configuration defaults, generous enough for a loaded CI runner.
+func Limits() database.Limits {
+	return database.Limits{
+		StatementTimeout: 30 * time.Second, IdleInTransactionTimeout: 30 * time.Second,
+		LockTimeout: 2 * time.Second, MaxConnIdleTime: time.Minute,
+	}
+}
 
 // AdminURL returns the admin connection URL from IAM_TEST_DATABASE_URL. When
 // it is unset the test is skipped, or fails if IAM_REQUIRE_DB=1.
@@ -89,6 +99,20 @@ func NewWithAppRole(t testing.TB) AppDB {
 	u.User = url.UserPassword(role, password)
 	db.AppURL = u.String()
 	return db
+}
+
+// NewRole creates a role iam_test_app_<pid>_<n> with the given attributes
+// (for example "NOLOGIN BYPASSRLS"), dropped when the test ends. Objects it
+// comes to own in a database must be dropped by the test first, or that
+// database must be dropped before it (register this before the database).
+func NewRole(t testing.TB, attributes string) string {
+	t.Helper()
+	adminURL := AdminURL(t)
+	role := fmt.Sprintf("iam_test_app_%d_%d", os.Getpid(), counter.Add(1))
+	quoted := pgx.Identifier{role}.Sanitize()
+	adminExec(t, adminURL, "CREATE ROLE "+quoted+" "+attributes)
+	t.Cleanup(func() { cleanupExec(t, adminURL, "DROP ROLE IF EXISTS "+quoted) })
+	return role
 }
 
 // adminExec runs one statement on the admin database and fails the test on

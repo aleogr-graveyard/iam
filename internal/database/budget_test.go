@@ -3,8 +3,10 @@ package database_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aleogr/iam/internal/database"
+	"github.com/aleogr/iam/internal/testdb"
 )
 
 // TestConnectionBudget holds the lab ceiling of ADR 0001, item 6: the service
@@ -32,7 +34,7 @@ func TestConnectionBudget_MatchesPoolConfigs(t *testing.T) {
 		{"service", database.ServicePoolKind, database.ServicePool},
 		{"migration", database.MigrationPoolKind, database.MigrationJob},
 	} {
-		cfg, err := database.PoolConfig(url, tc.kind)
+		cfg, err := database.PoolConfig(url, tc.kind, testdb.Limits())
 		if err != nil {
 			t.Fatalf("%s: PoolConfig: %v", tc.name, err)
 		}
@@ -62,7 +64,7 @@ func TestPoolConfig_InvalidURLDoesNotLeakCredentials(t *testing.T) {
 		"postgres://iam:" + password + "%zz@db.example.com/iam",
 	} {
 		for _, kind := range []database.PoolKind{database.ServicePoolKind, database.MigrationPoolKind} {
-			_, err := database.PoolConfig(raw, kind)
+			_, err := database.PoolConfig(raw, kind, testdb.Limits())
 			if err == nil {
 				t.Errorf("PoolConfig accepted an invalid URL")
 				continue
@@ -70,6 +72,48 @@ func TestPoolConfig_InvalidURLDoesNotLeakCredentials(t *testing.T) {
 			if strings.Contains(err.Error(), password) || strings.Contains(err.Error(), "db.example.com") {
 				t.Errorf("error leaks the URL: %v", err)
 			}
+		}
+	}
+}
+
+// Both pool kinds send the limits as session settings, so no statement, lock
+// wait or idle transaction can hold a connection indefinitely.
+func TestPoolConfig_CarriesLimits(t *testing.T) {
+	limits := database.Limits{
+		StatementTimeout: 1500 * time.Millisecond, IdleInTransactionTimeout: 7 * time.Second,
+		LockTimeout: 250 * time.Millisecond, MaxConnIdleTime: 42 * time.Second,
+	}
+	want := map[string]string{
+		"statement_timeout": "1500", "idle_in_transaction_session_timeout": "7000", "lock_timeout": "250",
+	}
+	for _, kind := range []database.PoolKind{database.ServicePoolKind, database.MigrationPoolKind} {
+		cfg, err := database.PoolConfig("postgres://iam@db.invalid/iam", kind, limits)
+		if err != nil {
+			t.Fatalf("PoolConfig: %v", err)
+		}
+		for k, v := range want {
+			if got := cfg.ConnConfig.RuntimeParams[k]; got != v {
+				t.Errorf("kind %d: %s = %q, want %q", kind, k, got, v)
+			}
+		}
+		if cfg.MaxConnIdleTime != limits.MaxConnIdleTime {
+			t.Errorf("kind %d: MaxConnIdleTime = %v, want %v", kind, cfg.MaxConnIdleTime, limits.MaxConnIdleTime)
+		}
+	}
+}
+
+// Limits are required: a missing one would mean "no limit" to Postgres.
+func TestPoolConfig_RefusesMissingLimits(t *testing.T) {
+	for name, mutate := range map[string]func(*database.Limits){
+		"statement": func(l *database.Limits) { l.StatementTimeout = 0 },
+		"idle":      func(l *database.Limits) { l.IdleInTransactionTimeout = 0 },
+		"lock":      func(l *database.Limits) { l.LockTimeout = 500 * time.Microsecond },
+		"conn idle": func(l *database.Limits) { l.MaxConnIdleTime = -time.Second },
+	} {
+		l := testdb.Limits()
+		mutate(&l)
+		if _, err := database.PoolConfig("postgres://iam@db.invalid/iam", database.ServicePoolKind, l); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }
