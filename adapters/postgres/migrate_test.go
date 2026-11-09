@@ -181,7 +181,8 @@ func TestMigrate_VerifiesAppRolePrivileges(t *testing.T) {
 	// function (EXECUTE, here of a SECURITY DEFINER function, which runs with
 	// its owner's rights) and CREATE on the schema.
 	for name, grant := range map[string]func(role string) []string{
-		"column grant": func(role string) []string { return []string{"GRANT UPDATE (email) ON iam.users TO " + role} },
+		"column grant":           func(role string) []string { return []string{"GRANT UPDATE (email) ON iam.users TO " + role} },
+		"column grant to PUBLIC": func(string) []string { return []string{"GRANT UPDATE (email) ON iam.users TO PUBLIC"} },
 		"sequence grant": func(role string) []string {
 			return []string{"CREATE SEQUENCE iam.s", "GRANT USAGE ON SEQUENCE iam.s TO " + role}
 		},
