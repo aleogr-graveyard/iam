@@ -24,6 +24,7 @@ func (tx *tenantTx) Organizations() storage.OrganizationRepo { return orgRepo{tx
 func (tx *tenantTx) Users() storage.UserRepo                 { return userRepo{tx} }
 func (tx *tenantTx) Memberships() storage.MembershipRepo     { return memberRepo{tx} }
 func (tx *tenantTx) Applications() storage.ApplicationRepo   { return appRepo{tx} }
+func (tx *tenantTx) Audit() storage.AuditLog                 { return auditRepo{conn: &tx.txConn, tenant: tx.tenant} }
 
 var errForeignRow = errors.New("row of another tenant")
 

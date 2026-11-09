@@ -66,16 +66,18 @@ func contextErr(err error) error {
 // constraintErrors maps each constraint the adapter relies on to the storage
 // error it means. Only the entity and the field are named, never a value.
 var constraintErrors = map[string]error{
-	"tenants_pkey":                     conflict("tenant", "id"),
-	"tenants_slug_key":                 conflict("tenant", "slug"),
-	"organizations_pkey":               conflict("organization", "id"),
-	"organizations_tenant_id_slug_key": conflict("organization", "slug"),
-	"users_pkey":                       conflict("user", "id"),
-	"users_tenant_id_email_key":        conflict("user", "email"),
-	"applications_pkey":                conflict("application", "id"),
-	"memberships_pkey":                 conflict("membership", "organization_id, user_id"),
-	"memberships_organization_fkey":    notFound("organization"),
-	"memberships_user_fkey":            notFound("user"),
+	"tenants_pkey":                        conflict("tenant", "id"),
+	"tenants_slug_key":                    conflict("tenant", "slug"),
+	"organizations_pkey":                  conflict("organization", "id"),
+	"organizations_tenant_id_slug_key":    conflict("organization", "slug"),
+	"users_pkey":                          conflict("user", "id"),
+	"users_tenant_id_email_key":           conflict("user", "email"),
+	"applications_pkey":                   conflict("application", "id"),
+	"memberships_pkey":                    conflict("membership", "organization_id, user_id"),
+	"memberships_organization_fkey":       notFound("organization"),
+	"memberships_user_fkey":               notFound("user"),
+	"audit_events_pkey":                   conflict("audit event", "id"),
+	"audit_events_tenant_id_sequence_key": conflict("audit event", "sequence"),
 }
 
 // writeError maps a failed write: a known unique or foreign key constraint

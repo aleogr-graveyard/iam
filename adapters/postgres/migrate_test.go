@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -289,5 +290,35 @@ func TestMigrate_StatementTimeout(t *testing.T) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "57014" {
 		t.Fatalf("Migrate = %v, want query_canceled (57014)", err)
+	}
+}
+
+// TestMigrations_AppliedChecksumsArePinned: an applied migration never
+// changes (expand/contract); the recorded checksum of every version is pinned
+// here, so editing one fails before any database refuses it. A new migration
+// adds its line.
+func TestMigrations_AppliedChecksumsArePinned(t *testing.T) {
+	want := map[string]string{
+		"20261107000000_tenancy": "f638ff45ab718727a392e97e66027974781f5cda3249a2e15c28faf625a5601d",
+		"20261107000100_audit":   "9abc7f4b82da9022a4aa4289be9f799661f7e7e5f25fc11aa37bf3d2fc39e322",
+	}
+	rows, err := connect(t, migratedDB(t).AdminURL).Query(t.Context(),
+		"SELECT version, encode(checksum, 'hex') FROM iam.schema_migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for rows.Next() {
+		var v, sum string
+		if err := rows.Scan(&v, &sum); err != nil {
+			t.Fatal(err)
+		}
+		got[v] = sum
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("applied checksums:\n got  %v\n want %v", got, want)
 	}
 }

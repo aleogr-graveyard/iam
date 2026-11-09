@@ -48,7 +48,7 @@ O marco 1 é executado em quatro planos: **1A** contratos e fundação
 | SHARED-001 📜 | C1 esquema de configuração (tipos, validação, documentação gerada) | ✅ | OPS-003 |
 | SHARED-002 📜 | C2 porta de criptografia | ✅ | OPS-003 |
 | SHARED-003 📜 | C3 portas de armazenamento + suíte de contrato (inclui abuso entre tenants) | ✅ | OPS-005 |
-| SHARED-004 📜 | C4 esquema do evento de auditoria | ⏳ | OPS-003 |
+| SHARED-004 📜 | C4 esquema do evento de auditoria | ✅ | OPS-003 |
 | SHARED-005 📜 | C5 biblioteca de máquinas de estados (módulo publicável) | ✅ | OPS-003 |
 | SHARED-006 📜 | C6 API administrativa em Protobuf (tenants, organizações, aplicações, usuários) | ⏳ | OPS-004 |
 | AUTHN-001 📜 | C8 perfil OIDC suportado e discovery | ⏳ | OPS-003 |
@@ -64,7 +64,7 @@ O marco 1 é executado em quatro planos: **1A** contratos e fundação
 | SHARED-011 | Criptografia: Argon2id, JOSE (`go-jose`), aleatoriedade, adaptador de chaves | ✅ | SHARED-002 |
 | SHARED-012 | Adaptador Postgres, migrações, RLS, orçamento de conexões com teste | ✅ | SHARED-003 |
 | SHARED-013 | Tenancy: tenant, organização, membership, aplicação, tenant de sistema | ⏳ | SHARED-003, SHARED-012 |
-| SHARED-014 | Auditoria encadeada por hash | ⏳ | SHARED-004, SHARED-012 |
+| SHARED-014 | Auditoria encadeada por hash | ✅ | SHARED-004, SHARED-012 |
 | SHARED-015 | API administrativa servida com Connect | ⏳ | SHARED-006, SHARED-013 |
 | AUTHN-010 | Autenticador por senha (NIST SP 800-63-4, senha vazada) | ⏳ | SHARED-011, SHARED-013 |
 | AUTHN-011 | Autenticador por passkey (`go-webauthn`), recusado fora do tenant | ⏳ | SHARED-011, SHARED-013 |

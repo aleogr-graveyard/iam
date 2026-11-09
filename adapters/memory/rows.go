@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/aleogr/iam/shared/audit"
 	"github.com/aleogr/iam/shared/ids"
 	"github.com/aleogr/iam/shared/storage"
 	"github.com/aleogr/iam/shared/tenancy"
@@ -112,6 +113,10 @@ type tenantData struct {
 	users   keyed[tenancy.User]         // by normalized e-mail
 	members map[memberKey]tenancy.Membership
 	apps    map[ids.ID]tenancy.Application
+	// events is the audit chain in sequence order, append-only; eventIDs
+	// indexes its IDs.
+	events   []audit.Event
+	eventIDs map[ids.ID]struct{}
 }
 
 // clone copies d; a nil d (a tenant with nothing committed yet) gives an
@@ -119,11 +124,17 @@ type tenantData struct {
 func (d *tenantData) clone() *tenantData {
 	if d == nil {
 		return &tenantData{
-			orgs:    newKeyed[tenancy.Organization]("organization", "slug"),
-			users:   newKeyed[tenancy.User]("user", "email"),
-			members: map[memberKey]tenancy.Membership{},
-			apps:    map[ids.ID]tenancy.Application{},
+			orgs:     newKeyed[tenancy.Organization]("organization", "slug"),
+			users:    newKeyed[tenancy.User]("user", "email"),
+			members:  map[memberKey]tenancy.Membership{},
+			apps:     map[ids.ID]tenancy.Application{},
+			eventIDs: map[ids.ID]struct{}{},
 		}
 	}
-	return &tenantData{orgs: d.orgs.clone(), users: d.users.clone(), members: maps.Clone(d.members), apps: maps.Clone(d.apps)}
+	// Clip: an append to the copy's events must never write into the
+	// committed backing array.
+	return &tenantData{
+		orgs: d.orgs.clone(), users: d.users.clone(), members: maps.Clone(d.members), apps: maps.Clone(d.apps),
+		events: slices.Clip(d.events), eventIDs: maps.Clone(d.eventIDs),
+	}
 }

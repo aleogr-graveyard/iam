@@ -34,6 +34,9 @@ func (tx *tenantTx) Organizations() storage.OrganizationRepo { return orgRepo{tx
 func (tx *tenantTx) Users() storage.UserRepo                 { return userRepo{tx} }
 func (tx *tenantTx) Memberships() storage.MembershipRepo     { return memberRepo{tx} }
 func (tx *tenantTx) Applications() storage.ApplicationRepo   { return appRepo{tx} }
+func (tx *tenantTx) Audit() storage.AuditLog {
+	return auditLog{state: &tx.txState, tenant: tx.tenant, data: tx.data, all: tx.all}
+}
 
 // createKeyed validates v (its tenant and time already forced by the caller)
 // and stores it in the index pick selects, in the Tx's tenant, refusing an ID

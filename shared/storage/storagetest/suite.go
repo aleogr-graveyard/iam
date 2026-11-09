@@ -35,7 +35,7 @@ type test struct {
 // empty store.
 func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 	t.Helper()
-	groups := [][]test{tenantTests(), repoTests(), membershipTests(), listTests(), isolationTests(), scopedIsolationTests(), txTests(), errorTests(), timeTests()}
+	groups := [][]test{tenantTests(), repoTests(), membershipTests(), listTests(), isolationTests(), scopedIsolationTests(), txTests(), errorTests(), timeTests(), auditTests()}
 	for _, g := range groups {
 		for _, tc := range g {
 			t.Run(tc.name, func(t *testing.T) {

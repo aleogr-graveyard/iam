@@ -10,7 +10,9 @@
 // out. IDs are unique across tenants: a create checks the committed rows of
 // every other tenant, which cannot change while the mutex is held. A nested
 // InTenant or InSystem made with the ctx given to fn is refused
-// (storage.ErrNestedTx); one made with another ctx deadlocks.
+// (storage.ErrNestedTx); one made with another ctx deadlocks. Because
+// transactions are serialized, appends to an audit chain never race: the
+// newest event of the working copy is the head of the chain.
 package memory
 
 import (
@@ -81,12 +83,18 @@ func (s *Store) InSystem(ctx context.Context, fn func(context.Context, storage.S
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx := &systemTx{reg: s.reg.clone()}
+	tx := &systemTx{reg: s.reg.clone(), sys: ids.TenantID{ID: s.reg.system}, all: s.tenants}
+	if !tx.sys.IsZero() {
+		tx.sysData = s.tenants[tx.sys.ID].clone()
+	}
 	defer tx.finish()
 	if err := run(txCtx, func(ctx context.Context) error { return fn(ctx, tx) }); err != nil {
 		return err
 	}
 	s.reg = tx.reg
+	if tx.sysData != nil {
+		s.tenants[tx.sys.ID] = tx.sysData
+	}
 	return nil
 }
 

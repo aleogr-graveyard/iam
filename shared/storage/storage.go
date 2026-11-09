@@ -72,6 +72,39 @@
 // timestamptz: every adapter truncates CreatedAt toward the past on write
 // (never rounds), so a value read back equals CreatedAt.Truncate(time.Microsecond).
 //
+// # Audit (contract C4)
+//
+// Each tenant has one audit chain (package audit), appended through
+// Tx.Audit() in the transaction of the change it records: the event commits
+// or rolls back with it, and a rolled-back event's sequence is reused by the
+// next append. Append takes an event built by the caller, with its ID from an
+// ids.Generator and its Time from the caller's injected clock (never from a
+// client), and in this order:
+//
+//   - forces the Tx's tenant onto TenantID and audit.SchemaVersion onto
+//     SchemaVersion, truncates Time to the microsecond in UTC (Times, above)
+//     and treats empty Data as nil;
+//   - assigns Sequence and PrevHash from the newest event of the chain, as
+//     seen by this transaction after waiting for every concurrent append to
+//     the same chain to commit or roll back, so that concurrent appends give
+//     a chain without gap or fork;
+//   - seals the event (audit.Seal, which validates it) and stores it.
+//
+// It returns the sealed event as stored. An event that fails validation is
+// ErrInvalid wrapping audit.ErrInvalid (not tenancy.ErrInvalid) and leaves the
+// chain as it was; an ID that any tenant's chain holds is ErrConflict (event
+// IDs are unique across tenants, as entity IDs are). AuditLog.Events reads
+// the chain in Sequence order, strictly after `after` (0 starts at the
+// first event), with the list limit rules; a negative `after` is ErrInvalid.
+// Events are never changed or removed: the ports have no such method, and
+// the Postgres app role has neither UPDATE nor DELETE on them.
+//
+// SystemTx.Audit() appends to the system tenant's chain (ruling R1). It is
+// bound when InSystem starts: before EnsureSystemTenant has committed, Append
+// returns ErrInvalidTenant, also in the transaction that creates the system
+// tenant, so the system tenant's own creation event is appended by a second
+// InSystem.
+//
 // # Carried over to later tasks
 //
 //   - Postgres adapter (Task 9, done): the RLS tests in adapters/postgres
@@ -87,6 +120,7 @@ package storage
 import (
 	"context"
 
+	"github.com/aleogr/iam/shared/audit"
 	"github.com/aleogr/iam/shared/clock"
 	"github.com/aleogr/iam/shared/ids"
 	"github.com/aleogr/iam/shared/tenancy"
@@ -103,7 +137,8 @@ type Store interface {
 	// not checked here: lifecycle rules (a suspended tenant) belong to callers.
 	InTenant(ctx context.Context, tenant ids.TenantID, fn func(ctx context.Context, tx Tx) error) error
 	// InSystem runs fn in one transaction over the tenant registry. Its audit
-	// events go to the system tenant's chain once it exists (Task 10).
+	// events go to the system tenant's chain once it exists (package doc,
+	// Audit).
 	InSystem(ctx context.Context, fn func(ctx context.Context, tx SystemTx) error) error
 }
 
@@ -132,6 +167,9 @@ type SystemTx interface {
 	Tenant(ctx context.Context, id ids.TenantID) (tenancy.Tenant, error)
 	// ListTenants lists every tenant, the system tenant included.
 	ListTenants(ctx context.Context, after ids.TenantID, limit int) ([]tenancy.Tenant, error)
+	// Audit appends to the system tenant's chain; ErrInvalidTenant when the
+	// system tenant did not exist when InSystem started.
+	Audit() AuditAppender
 }
 
 // Tx is a transaction bound to one tenant.
@@ -140,6 +178,23 @@ type Tx interface {
 	Users() UserRepo
 	Memberships() MembershipRepo
 	Applications() ApplicationRepo
+	Audit() AuditLog
+}
+
+// AuditAppender appends events to one tenant's audit chain (package doc,
+// Audit).
+type AuditAppender interface {
+	// Append assigns Sequence, PrevHash and Hash inside the transaction and
+	// returns the event as stored.
+	Append(ctx context.Context, e audit.Event) (audit.Event, error)
+}
+
+// AuditLog is the audit chain of the Tx's tenant.
+type AuditLog interface {
+	AuditAppender
+	// Events lists the chain in Sequence order, strictly after the sequence
+	// `after`.
+	Events(ctx context.Context, after int64, limit int) ([]audit.Event, error)
 }
 
 // OrganizationRepo stores the organizations of the Tx's tenant. Slugs are

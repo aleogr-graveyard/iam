@@ -113,6 +113,7 @@ func checkConnectionRole(ctx context.Context, q querier) error {
 // A migration that grants more updates it in the same change (expand).
 var appPrivileges = map[string][]string{
 	"applications":  {"INSERT", "SELECT"},
+	"audit_events":  {"INSERT", "SELECT"},
 	"memberships":   {"DELETE", "INSERT", "SELECT"},
 	"organizations": {"INSERT", "SELECT"},
 	"tenants":       {"INSERT", "SELECT"},

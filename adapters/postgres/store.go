@@ -16,9 +16,15 @@
 // InTenant checks that the tenant exists and sets iam.tenant_id in one
 // statement, at the start of its transaction. InSystem always overwrites
 // iam.tenant_id with the system tenant's ID, so the system's own audit
-// appends (Task 10) obey RLS; before EnsureSystemTenant has created the
-// system tenant it sets it to the empty string, which the policies read as
-// "no tenant" (ruling R1). The setting is transaction-local (set_config with
+// appends (SystemTx.Audit) obey RLS; before EnsureSystemTenant has created
+// the system tenant it sets it to the empty string, which the policies read
+// as "no tenant", and SystemTx.Audit refuses to append (ruling R1).
+//
+// # Audit
+//
+// iam.audit_events is append-only for the service: the app role may only
+// read and insert. Appends to one tenant's chain are serialized by a
+// per-tenant advisory lock (audit.go). The setting is transaction-local (set_config with
 // is_local), so it never survives on a pooled connection.
 //
 // # Transactions
@@ -131,6 +137,13 @@ func (s *Store) InSystem(ctx context.Context, fn func(context.Context, storage.S
 			return sanitize(err)
 		}
 		tx := &systemTx{txConn: txConn{tx: pgTx}}
+		if set != "" {
+			var sys pgtype.UUID
+			if err := sys.Scan(set); err != nil {
+				return sanitize(err)
+			}
+			tx.sys = ids.TenantID{ID: sys.Bytes}
+		}
 		defer tx.finish()
 		return fn(ctx, tx)
 	})

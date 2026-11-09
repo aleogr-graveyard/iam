@@ -19,9 +19,19 @@ func newRegistry() registry { return registry{tenants: newKeyed[tenancy.Tenant](
 
 func (r registry) clone() registry { return registry{tenants: r.tenants.clone(), system: r.system} }
 
+// systemTx works on a copy of the registry and, once the system tenant
+// exists when the transaction starts, on a copy of that tenant's rows for its
+// audit chain (ruling R1).
 type systemTx struct {
 	txState
-	reg registry
+	reg     registry
+	sys     ids.TenantID // zero before the system tenant
+	sysData *tenantData  // nil before the system tenant
+	all     map[ids.ID]*tenantData
+}
+
+func (tx *systemTx) Audit() storage.AuditAppender {
+	return auditLog{state: &tx.txState, tenant: tx.sys, data: tx.sysData, all: tx.all}
 }
 
 func (tx *systemTx) CreateTenant(ctx context.Context, t tenancy.Tenant) error {

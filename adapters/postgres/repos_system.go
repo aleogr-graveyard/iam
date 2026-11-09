@@ -13,8 +13,15 @@ import (
 )
 
 // systemTx is the tenant registry. iam.tenants has no tenant_id and no row
-// level security; only this type reaches it.
-type systemTx struct{ txConn }
+// level security; only this type reaches it. sys is the system tenant as of
+// the start of the transaction (zero before it exists), the chain its audit
+// events go to (ruling R1).
+type systemTx struct {
+	txConn
+	sys ids.TenantID
+}
+
+func (tx *systemTx) Audit() storage.AuditAppender { return auditRepo{conn: &tx.txConn, tenant: tx.sys} }
 
 const tenantColumns = "id, slug, name, status, created_at"
 

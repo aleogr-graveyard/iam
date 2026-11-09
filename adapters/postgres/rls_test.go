@@ -20,7 +20,7 @@ import (
 // repositories never issue (no tenant_id filter, a foreign tenant_id) as the
 // app role and check that the database refuses or hides other tenants' rows.
 
-var tenantTables = []string{"organizations", "users", "memberships", "applications"}
+var tenantTables = []string{"organizations", "users", "memberships", "applications", "audit_events"}
 
 const codeInsufficientPrivilege = "42501"
 
@@ -48,6 +48,7 @@ func (f *fixture) seed(s storage.Store, slug string) seeded {
 	if err != nil {
 		f.t.Fatalf("seed %s: %v", slug, err)
 	}
+	f.appendEvent(s, r.tenant)
 	return r
 }
 
@@ -196,6 +197,8 @@ func TestRLS_WithCheckRefusesForeignTenantInsert(t *testing.T) {
 		"INSERT INTO iam.users VALUES ($1, $2, 'bia@example.com', false, 'active', now())":                   {f.id().String(), bt},
 		"INSERT INTO iam.memberships VALUES ($1, $2, $3, now())":                                             {bt, b.org.String(), b.user.String()},
 		"INSERT INTO iam.applications VALUES ($1, $2, 'X', 'public', '{https://x.example/cb}', NULL, now())": {f.id().String(), bt},
+		"INSERT INTO iam.audit_events VALUES ($1, $2, 2, now(), 1, 'a.b', 'system', 'x', '', 'success', '{}', $3, $3)": {
+			f.id().String(), bt, make([]byte, 32)},
 	}
 	rawInTenant(t, store, a.tenant, func(ctx context.Context, raw pgx.Tx) {
 		for sql, args := range statements {
@@ -257,6 +260,7 @@ func TestRLS_AppRoleHasLeastPrivilege(t *testing.T) {
 	want := map[string][]string{
 		"tenants": {"SELECT", "INSERT"}, "organizations": {"SELECT", "INSERT"}, "users": {"SELECT", "INSERT"},
 		"applications": {"SELECT", "INSERT"}, "memberships": {"SELECT", "INSERT", "DELETE"}, "schema_migrations": nil,
+		"audit_events": {"SELECT", "INSERT"},
 	}
 	for table, granted := range want {
 		for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
