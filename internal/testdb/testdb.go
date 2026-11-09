@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,17 +103,48 @@ func NewWithAppRole(t testing.TB) AppDB {
 }
 
 // NewRole creates a role iam_test_app_<pid>_<n> with the given attributes
-// (for example "NOLOGIN BYPASSRLS"), dropped when the test ends. Objects it
-// comes to own in a database must be dropped by the test first, or that
-// database must be dropped before it (register this before the database).
-func NewRole(t testing.TB, attributes string) string {
+// (for example "NOLOGIN BYPASSRLS"), for use in the database at databaseURL
+// (a URL New returned), and drops it when the test ends. If that database
+// still exists then, the cleanup first runs DROP OWNED BY there, so objects
+// and privileges the role holds in it never keep it alive, whatever the
+// order of the cleanups.
+func NewRole(t testing.TB, databaseURL, attributes string) string {
 	t.Helper()
 	adminURL := AdminURL(t)
 	role := fmt.Sprintf("iam_test_app_%d_%d", os.Getpid(), counter.Add(1))
 	quoted := pgx.Identifier{role}.Sanitize()
 	adminExec(t, adminURL, "CREATE ROLE "+quoted+" "+attributes)
-	t.Cleanup(func() { cleanupExec(t, adminURL, "DROP ROLE IF EXISTS "+quoted) })
+	t.Cleanup(func() {
+		if databaseExists(t, adminURL, databaseURL) {
+			cleanupExec(t, databaseURL, "DROP OWNED BY "+quoted)
+		}
+		cleanupExec(t, adminURL, "DROP ROLE IF EXISTS "+quoted)
+	})
 	return role
+}
+
+// databaseExists reports whether the database of databaseURL still exists.
+func databaseExists(t testing.TB, adminURL, databaseURL string) bool {
+	t.Helper()
+	u, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Errorf("testdb: parse database URL: invalid URL")
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, adminURL)
+	if err != nil {
+		t.Errorf("testdb: connect for cleanup: %v", err)
+		return false
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var exists bool
+	err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", strings.TrimPrefix(u.Path, "/")).Scan(&exists)
+	if err != nil {
+		t.Errorf("testdb: look up database: %v", err)
+	}
+	return exists
 }
 
 // adminExec runs one statement on the admin database and fails the test on

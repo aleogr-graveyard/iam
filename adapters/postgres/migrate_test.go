@@ -171,16 +171,52 @@ func TestMigrate_VerifiesAppRolePrivileges(t *testing.T) {
 	})
 	t.Run("grant through a member role", func(t *testing.T) {
 		db := migratedDB(t)
-		r := testdb.NewRole(t, "NOLOGIN")
+		r := testdb.NewRole(t, db.AdminURL, "NOLOGIN")
 		adminExec(t, db, "GRANT TRUNCATE ON iam.tenants TO "+quote(r), "GRANT "+quote(r)+" TO "+quote(db.AppRole))
-		t.Cleanup(func() { adminExec(t, db, "REVOKE ALL ON iam.tenants FROM "+quote(r)) })
 		if err := migrate(t, db.AdminURL, db.AppRole); !errors.Is(err, postgres.ErrInvalidAppRole) {
 			t.Fatalf("Migrate = %v, want ErrInvalidAppRole", err)
 		}
 	})
+	// Grants that table privileges do not show: a column, a sequence, a
+	// function (EXECUTE, here of a SECURITY DEFINER function, which runs with
+	// its owner's rights) and CREATE on the schema.
+	for name, grant := range map[string]func(role string) []string{
+		"column grant": func(role string) []string { return []string{"GRANT UPDATE (email) ON iam.users TO " + role} },
+		"sequence grant": func(role string) []string {
+			return []string{"CREATE SEQUENCE iam.s", "GRANT USAGE ON SEQUENCE iam.s TO " + role}
+		},
+		"public security definer function": func(string) []string {
+			return []string{
+				"CREATE FUNCTION iam.f() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT count(*) FROM iam.users'",
+				"GRANT EXECUTE ON FUNCTION iam.f() TO PUBLIC",
+			}
+		},
+		"schema create": func(role string) []string { return []string{"GRANT CREATE ON SCHEMA iam TO " + role} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := migratedDB(t)
+			adminExec(t, db, grant(quote(db.AppRole))...)
+			if err := migrate(t, db.AdminURL, db.AppRole); !errors.Is(err, postgres.ErrInvalidAppRole) {
+				t.Fatalf("Migrate = %v, want ErrInvalidAppRole", err)
+			}
+		})
+	}
+	// A function the migrator adds later is not executable by PUBLIC: the
+	// first migration revoked EXECUTE in the migrator's default privileges.
+	t.Run("new function is not public", func(t *testing.T) {
+		db := migratedDB(t)
+		adminExec(t, db, "CREATE FUNCTION iam.g() RETURNS int LANGUAGE sql AS 'SELECT 1'")
+		if err := migrate(t, db.AdminURL, db.AppRole); err != nil {
+			t.Fatalf("Migrate = %v, want nil", err)
+		}
+		var can bool
+		if err := connect(t, db.AppURL).QueryRow(t.Context(), "SELECT has_function_privilege('iam.g()', 'EXECUTE')").Scan(&can); err != nil || can {
+			t.Fatalf("app role can execute a new function: %v (%v)", can, err)
+		}
+	})
 	t.Run("changed app role", func(t *testing.T) {
 		db := migratedDB(t)
-		other := testdb.NewRole(t, "NOLOGIN")
+		other := testdb.NewRole(t, db.AdminURL, "NOLOGIN")
 		if err := migrate(t, db.AdminURL, other); !errors.Is(err, postgres.ErrInvalidAppRole) {
 			t.Fatalf("Migrate with another role = %v, want ErrInvalidAppRole", err)
 		}
@@ -224,5 +260,33 @@ func TestMigrate_RefusesMissingTimeouts(t *testing.T) {
 	cfg.StatementTimeout = 0
 	if err := postgres.Migrate(t.Context(), nil, cfg); err == nil {
 		t.Fatal("Migrate accepted a zero statement timeout")
+	}
+}
+
+// TestMigrate_StatementTimeout: a migration statement longer than the
+// configured statement timeout is cancelled. The pool's own limits are long,
+// so only the per-transaction setting can end it; the lock wait is the long
+// statement, and its own timeout is longer than the statement timeout.
+func TestMigrate_StatementTimeout(t *testing.T) {
+	db := migratedDB(t)
+	holder := connect(t, db.AdminURL)
+	if _, err := holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", int64(postgres.MigrationLockKey)); err != nil {
+		t.Fatalf("hold the lock: %v", err)
+	}
+	limits := testdb.Limits()
+	limits.StatementTimeout, limits.LockTimeout = time.Minute, time.Minute
+	pool, err := database.OpenMigrator(t.Context(), db.AdminURL, limits)
+	if err != nil {
+		t.Fatalf("OpenMigrator: %v", err)
+	}
+	defer pool.Close()
+	cfg := migrateConfig(db.AppRole)
+	cfg.StatementTimeout, cfg.LockTimeout = 200*time.Millisecond, time.Minute
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	err = postgres.Migrate(ctx, pool, cfg)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "57014" {
+		t.Fatalf("Migrate = %v, want query_canceled (57014)", err)
 	}
 }

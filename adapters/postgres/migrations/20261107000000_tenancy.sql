@@ -105,3 +105,12 @@ CREATE POLICY tenant_isolation ON iam.applications
 -- app role can neither change nor delete its rows.
 GRANT SELECT, INSERT ON iam.tenants, iam.organizations, iam.users, iam.applications TO {{app_role}};
 GRANT SELECT, INSERT, DELETE ON iam.memberships TO {{app_role}};
+
+-- Functions are executable by PUBLIC by default. Revoke that from every
+-- function in the schema, and from the migration role's default privileges
+-- so that functions it creates later start closed. The default privileges are
+-- changed database-wide for the migration role, not IN SCHEMA iam: a
+-- per-schema default can only add to the global one and cannot revoke the
+-- global PUBLIC EXECUTE. The iam database belongs to this service alone.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA iam FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;

@@ -84,19 +84,29 @@ func checkAppRole(ctx context.Context, q querier, appRole string) (uint32, error
 	return oid, r.unsafe(true)
 }
 
-// checkConnectionRole is the store's startup check of the role it connects
-// as (the lab login role iam-run, a member of the app role, included). It
-// fails closed: any error refuses.
+// checkConnectionRole is the store's startup check of the roles it connects
+// as (the lab login role iam-run, a member of the app role, included): the
+// current user, and the session user, the login, which a connection can always
+// return to with RESET ROLE (a superuser login that starts with
+// options=-c role=<app> would otherwise pass). It fails closed: any error
+// refuses.
 func checkConnectionRole(ctx context.Context, q querier) error {
-	var oid uint32
-	if err := q.QueryRow(ctx, "SELECT oid FROM pg_roles WHERE rolname = current_user").Scan(&oid); err != nil {
-		return fmt.Errorf("postgres: check connection role: %w", sanitize(err))
-	}
-	r, err := risksOf(ctx, q, oid)
+	var current, session uint32
+	err := q.QueryRow(ctx, `SELECT (SELECT oid FROM pg_roles WHERE rolname = current_user),
+		(SELECT oid FROM pg_roles WHERE rolname = session_user)`).Scan(&current, &session)
 	if err != nil {
 		return fmt.Errorf("postgres: check connection role: %w", sanitize(err))
 	}
-	return r.unsafe(false)
+	for _, oid := range []uint32{current, session} {
+		r, err := risksOf(ctx, q, oid)
+		if err != nil {
+			return fmt.Errorf("postgres: check connection role: %w", sanitize(err))
+		}
+		if err := r.unsafe(false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // appPrivileges is exactly what the store uses, by table of the iam schema.
@@ -120,13 +130,33 @@ WHERE n.nspname = 'iam' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND EXISTS (SELECT 1 FROM ` + reachableRoles + ` AND has_table_privilege(r.oid, c.oid, p.priv))
 `
 
-const reachedSchemaSQL = `
+// reachedOtherSQL reports the other privileges the roles reachable from $1
+// hold in the iam schema: on the schema itself, on any sequence, on any
+// function (EXECUTE, PUBLIC's included), and any column-level grant (to one
+// of them or to PUBLIC, grantee 0), which table privileges do not show.
+const reachedOtherSQL = `
 SELECT coalesce(bool_or(has_schema_privilege(r.oid, 'iam', 'USAGE')), false),
-       coalesce(bool_or(has_schema_privilege(r.oid, 'iam', 'CREATE')), false)
+       coalesce(bool_or(has_schema_privilege(r.oid, 'iam', 'CREATE')), false),
+       coalesce(bool_or(EXISTS (
+           SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           -- CASE: has_sequence_privilege fails on a relation that is not a
+           -- sequence, and the planner may test it before relkind.
+           WHERE n.nspname = 'iam'
+             AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(r.oid, c.oid, 'USAGE, SELECT, UPDATE') ELSE false END)), false),
+       coalesce(bool_or(EXISTS (
+           SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'iam' AND has_function_privilege(r.oid, p.oid, 'EXECUTE'))), false),
+       coalesce(bool_or(EXISTS (
+           SELECT 1 FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL aclexplode(a.attacl) x
+           WHERE n.nspname = 'iam' AND a.attacl IS NOT NULL AND x.grantee IN (r.oid, 0))), false)
 FROM ` + reachableRoles
 
 // verifyPrivileges refuses an app role whose reachable privileges differ
-// from appPrivileges (and USAGE without CREATE on the schema).
+// from appPrivileges, plus USAGE without CREATE on the schema, and nothing on
+// sequences, functions or single columns: none of them is used today, so
+// there is no allow-list for them yet.
 func verifyPrivileges(ctx context.Context, q querier, role uint32) error {
 	rows, err := q.Query(ctx, reachedPrivilegesSQL, role)
 	if err != nil {
@@ -151,12 +181,24 @@ func verifyPrivileges(ctx context.Context, q querier, role uint32) error {
 	if !slices.Equal(got, want) {
 		return fmt.Errorf("%w: table privileges differ from the expected set", ErrInvalidAppRole)
 	}
-	var usage, create bool
-	if err := q.QueryRow(ctx, reachedSchemaSQL, role).Scan(&usage, &create); err != nil {
+	return verifyOtherPrivileges(ctx, q, role)
+}
+
+// verifyOtherPrivileges checks what table privileges do not show.
+func verifyOtherPrivileges(ctx context.Context, q querier, role uint32) error {
+	var usage, create, sequence, function, column bool
+	if err := q.QueryRow(ctx, reachedOtherSQL, role).Scan(&usage, &create, &sequence, &function, &column); err != nil {
 		return err
 	}
-	if !usage || create {
+	switch {
+	case !usage || create:
 		return fmt.Errorf("%w: schema privileges differ from USAGE only", ErrInvalidAppRole)
+	case sequence:
+		return fmt.Errorf("%w: role holds a privilege on a sequence", ErrInvalidAppRole)
+	case function:
+		return fmt.Errorf("%w: role can execute a function", ErrInvalidAppRole)
+	case column:
+		return fmt.Errorf("%w: role holds a column-level privilege", ErrInvalidAppRole)
 	}
 	return nil
 }

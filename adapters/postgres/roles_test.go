@@ -3,7 +3,9 @@ package postgres_test
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aleogr/iam/adapters/postgres"
@@ -23,20 +25,17 @@ type roleCase struct {
 
 func memberOf(attributes string) func(*testing.T, testdb.AppDB) {
 	return func(t *testing.T, db testdb.AppDB) {
-		r := testdb.NewRole(t, "NOLOGIN "+attributes)
+		r := testdb.NewRole(t, db.AdminURL, "NOLOGIN "+attributes)
 		adminExec(t, db, "GRANT "+quote(r)+" TO "+quote(db.AppRole))
 	}
 }
 
 // memberOfOwner makes the app role a member of a role that owns an object in
 // the iam schema, created by create (%s is the owner role).
-func memberOfOwner(create, drop string) func(*testing.T, testdb.AppDB) {
+func memberOfOwner(create string) func(*testing.T, testdb.AppDB) {
 	return func(t *testing.T, db testdb.AppDB) {
-		r := testdb.NewRole(t, "NOLOGIN")
+		r := testdb.NewRole(t, db.AdminURL, "NOLOGIN")
 		adminExec(t, db, fmt.Sprintf(create, quote(r)), "GRANT "+quote(r)+" TO "+quote(db.AppRole))
-		// Registered after NewRole, so it runs first and the role owns nothing
-		// when it is dropped.
-		t.Cleanup(func() { adminExec(t, db, drop) })
 	}
 }
 
@@ -49,15 +48,14 @@ var unsafeRoleCases = []roleCase{
 		adminExec(t, db, "DO $$ BEGIN EXECUTE format('GRANT %I TO %s', current_user, '"+quote(db.AppRole)+"'); END $$")
 	}},
 	{name: "member of an owner of a table", migrated: true, setup: memberOfOwner(
-		"CREATE TABLE iam.extra (id int); ALTER TABLE iam.extra OWNER TO %s", "DROP TABLE iam.extra")},
+		"CREATE TABLE iam.extra (id int); ALTER TABLE iam.extra OWNER TO %s")},
 	{name: "member of an owner of a function", migrated: true, setup: memberOfOwner(
-		"CREATE FUNCTION iam.f() RETURNS int LANGUAGE sql AS 'SELECT 1'; ALTER FUNCTION iam.f() OWNER TO %s", "DROP FUNCTION iam.f()")},
+		"CREATE FUNCTION iam.f() RETURNS int LANGUAGE sql AS 'SELECT 1'; ALTER FUNCTION iam.f() OWNER TO %s")},
 	{name: "member of an owner of a type", migrated: true, setup: memberOfOwner(
-		"CREATE TYPE iam.e AS ENUM ('a'); ALTER TYPE iam.e OWNER TO %s", "DROP TYPE iam.e")},
+		"CREATE TYPE iam.e AS ENUM ('a'); ALTER TYPE iam.e OWNER TO %s")},
 	{name: "owner of a function", migrated: true, setup: func(t *testing.T, db testdb.AppDB) {
 		adminExec(t, db, "CREATE FUNCTION iam.g() RETURNS int LANGUAGE sql AS 'SELECT 1'",
 			"ALTER FUNCTION iam.g() OWNER TO "+quote(db.AppRole))
-		t.Cleanup(func() { adminExec(t, db, "DROP FUNCTION iam.g()") })
 	}},
 }
 
@@ -107,6 +105,26 @@ func TestNewStore_RefusesUnsafeRole(t *testing.T) {
 			}
 		})
 	}
+	// A superuser login that only switches to the app role at connect time can
+	// RESET ROLE back: the check covers session_user too.
+	t.Run("superuser session with role option", func(t *testing.T) {
+		db := migratedDB(t)
+		u, err := url.Parse(db.AdminURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// libpq-style: the space is %20 (pgx keeps a "+" as is).
+		u.RawQuery += "&options=" + strings.ReplaceAll(url.QueryEscape("-c role="+db.AppRole), "+", "%20")
+		db.AppURL = u.String()
+		pool := appPool(t, db)
+		var current, session string
+		if err := pool.QueryRow(t.Context(), "SELECT current_user, session_user").Scan(&current, &session); err != nil || current != db.AppRole || session == db.AppRole {
+			t.Fatalf("probe: current_user %q, session_user %q (%v); want the app role on a superuser session", current, session, err)
+		}
+		if _, err := postgres.NewStore(t.Context(), pool); !errors.Is(err, postgres.ErrInvalidAppRole) {
+			t.Fatalf("NewStore = %v, want ErrInvalidAppRole", err)
+		}
+	})
 	t.Run("migrator connection", func(t *testing.T) {
 		db := migratedDB(t)
 		db.AppURL = db.AdminURL
@@ -120,7 +138,7 @@ func TestNewStore_RefusesUnsafeRole(t *testing.T) {
 // reads every tenant. NewStore refuses such a connection before any query.
 func TestRLS_MembershipBypassIsRefused(t *testing.T) {
 	db := migratedDB(t)
-	bypass := testdb.NewRole(t, "NOLOGIN BYPASSRLS")
+	bypass := testdb.NewRole(t, db.AdminURL, "NOLOGIN BYPASSRLS")
 	adminExec(t, db, "GRANT "+quote(bypass)+" TO "+quote(db.AppRole))
 	app := connect(t, db.AppURL)
 	if _, err := app.Exec(t.Context(), "SET ROLE "+quote(bypass)); err != nil {

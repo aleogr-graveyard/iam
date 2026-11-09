@@ -103,12 +103,40 @@ func TestNewWithAppRole_DropsRoleOnCleanup(t *testing.T) {
 func TestNewRole_CreatesAndDrops(t *testing.T) {
 	var role string
 	t.Run("sub", func(t *testing.T) {
-		role = testdb.NewRole(t, "NOLOGIN BYPASSRLS")
+		role = testdb.NewRole(t, testdb.New(t), "NOLOGIN BYPASSRLS")
 		var bypass bool
 		err := connect(t, testdb.AdminURL(t)).QueryRow(context.Background(),
 			"SELECT rolbypassrls FROM pg_roles WHERE rolname = $1", role).Scan(&bypass)
 		if err != nil || !bypass || !strings.HasPrefix(role, "iam_test_app_") {
 			t.Fatalf("role %q: bypassrls %v, %v", role, bypass, err)
+		}
+	})
+	var exists bool
+	err := connect(t, testdb.AdminURL(t)).QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).Scan(&exists)
+	if err != nil || exists {
+		t.Fatalf("role %q still exists after cleanup (%v)", role, err)
+	}
+}
+
+// The role's cleanup runs while the database it owns objects in still exists
+// (the database was registered first, so it is dropped after): it must drop
+// what the role owns there, and the role with it.
+func TestNewRole_DropsRoleThatOwnsObjectsInALiveDatabase(t *testing.T) {
+	var role string
+	t.Run("sub", func(t *testing.T) {
+		url := testdb.New(t)
+		role = testdb.NewRole(t, url, "NOLOGIN")
+		conn := connect(t, url)
+		for _, sql := range []string{
+			"CREATE TABLE owned (id int)",
+			"ALTER TABLE owned OWNER TO " + pgx.Identifier{role}.Sanitize(),
+			"CREATE TABLE granted (id int)",
+			"GRANT SELECT ON granted TO " + pgx.Identifier{role}.Sanitize(),
+		} {
+			if _, err := conn.Exec(context.Background(), sql); err != nil {
+				t.Fatalf("%s: %v", sql, err)
+			}
 		}
 	})
 	var exists bool
