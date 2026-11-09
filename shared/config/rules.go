@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,6 +17,8 @@ const (
 	owaspArgon2Memory = 19456
 	owaspArgon2Iter   = 2
 	maxShutdown       = 10 * time.Minute
+	minDatabaseLimit  = time.Millisecond // Postgres takes milliseconds
+	maxDatabaseLimit  = time.Hour
 )
 
 // validate checks value ranges and evaluates prohibitions and alerts. It
@@ -24,7 +27,7 @@ func validate(c *Config) ([]Finding, []string) {
 	var findings []Finding
 	var problems []string
 	for _, rule := range []func(*Config) ([]Finding, []string){
-		environmentRule, publicBaseURLRule, databaseRule, cursorKeyRule, shutdownRule, argon2Rule,
+		environmentRule, publicBaseURLRule, databaseRule, databaseLimitsRule, cursorKeyRule, shutdownRule, argon2Rule,
 	} {
 		f, p := rule(c)
 		findings = append(findings, f...)
@@ -107,6 +110,25 @@ func cursorKeyRule(c *Config) ([]Finding, []string) {
 		return nil, []string{"IAM_CURSOR_KEY: must be standard base64 encoding at least 32 bytes"}
 	}
 	return nil, nil
+}
+
+func databaseLimitsRule(c *Config) ([]Finding, []string) {
+	d := c.Database
+	var problems []string
+	for env, v := range map[string]time.Duration{
+		"IAM_DATABASE_STATEMENT_TIMEOUT":           d.StatementTimeout,
+		"IAM_DATABASE_IDLE_IN_TRANSACTION_TIMEOUT": d.IdleInTransactionTimeout,
+		"IAM_DATABASE_LOCK_TIMEOUT":                d.LockTimeout,
+		"IAM_DATABASE_MAX_CONN_IDLE_TIME":          d.MaxConnIdleTime,
+		"IAM_MIGRATION_STATEMENT_TIMEOUT":          d.MigrationStatementTimeout,
+		"IAM_MIGRATION_LOCK_TIMEOUT":               d.MigrationLockTimeout,
+	} {
+		if v < minDatabaseLimit || v > maxDatabaseLimit {
+			problems = append(problems, env+": must be between 1ms and 1h")
+		}
+	}
+	slices.Sort(problems) // map order is random; the error must be stable
+	return nil, problems
 }
 
 func shutdownRule(c *Config) ([]Finding, []string) {

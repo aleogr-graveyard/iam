@@ -66,13 +66,19 @@
 // position and nothing else. A limit of zero or less is ErrInvalid; a limit
 // above MaxListLimit is clamped to it (see ClampLimit).
 //
+// # Times
+//
+// Times are stored at microsecond precision, the precision of a Postgres
+// timestamptz: every adapter truncates CreatedAt toward the past on write
+// (never rounds), so a value read back equals CreatedAt.Truncate(time.Microsecond).
+//
 // # Carried over to later tasks
 //
-//   - Postgres adapter (Task 9): the RLS tests are mandatory, not optional:
-//     a query without the tenant filter inside InTenant sees only that tenant,
-//     iam.tenant_id never leaks across pooled transactions, and InSystem
-//     resets iam.tenant_id (to the system tenant or to unset, ruling R1) on a
-//     connection that just served InTenant.
+//   - Postgres adapter (Task 9, done): the RLS tests in adapters/postgres
+//     prove that a query without the tenant filter inside InTenant sees only
+//     that tenant, that iam.tenant_id never leaks across pooled transactions,
+//     and that InSystem resets iam.tenant_id (to the system tenant or to
+//     unset, ruling R1) on a connection that just served InTenant.
 //   - MembershipRepo.ListByUser is unbounded here. The tenancy service
 //     (Task 11) enforces a configurable cap on memberships per user, refusing
 //     an Add beyond it (fail closed), so the list stays small.

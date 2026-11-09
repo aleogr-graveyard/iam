@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aleogr/iam/shared/storage"
 	"github.com/aleogr/iam/shared/tenancy"
@@ -60,5 +61,15 @@ func TestEnterTx_RefusesNesting(t *testing.T) {
 	}
 	if _, err := storage.EnterTx(ctx); !errors.Is(err, storage.ErrNestedTx) {
 		t.Fatalf("nested EnterTx error = %v, want ErrNestedTx", err)
+	}
+}
+
+func TestMicroseconds_TruncatesTowardThePast(t *testing.T) {
+	at := time.Date(2026, 11, 9, 12, 0, 0, 123456999, time.UTC)
+	if got := storage.Microseconds(at); !got.Equal(time.Date(2026, 11, 9, 12, 0, 0, 123456000, time.UTC)) {
+		t.Fatalf("Microseconds = %v", got)
+	}
+	if !storage.Microseconds(time.Time{}).IsZero() {
+		t.Fatal("the zero time is not kept zero")
 	}
 }

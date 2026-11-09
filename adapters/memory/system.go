@@ -31,6 +31,7 @@ func (tx *systemTx) CreateTenant(ctx context.Context, t tenancy.Tenant) error {
 	if err := t.Validate(); err != nil {
 		return storage.Invalid(err)
 	}
+	t.CreatedAt = storage.Microseconds(t.CreatedAt)
 	return tx.reg.tenants.insert(t.ID.ID, t.Slug, t)
 }
 
@@ -45,6 +46,7 @@ func (tx *systemTx) EnsureSystemTenant(ctx context.Context, id ids.TenantID, nam
 	if err != nil {
 		return tenancy.Tenant{}, storage.Invalid(err)
 	}
+	t.CreatedAt = storage.Microseconds(t.CreatedAt)
 	if err := tx.reg.tenants.insert(t.ID.ID, t.Slug, t); err != nil {
 		return tenancy.Tenant{}, err
 	}

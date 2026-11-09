@@ -12,11 +12,17 @@ File keys are the lower-case variable names without the `IAM_` prefix.
 | `IAM_ENVIRONMENT` | `environment` | string | `production` | no | Deployment tier: development, lab or production. |
 | `IAM_HTTP_ADDR` | `http_addr` | string | `:8080` | no | Listen address of the HTTP server. |
 | `IAM_PUBLIC_BASE_URL` | `public_base_url` | string | - | yes | Public base URL; tenant issuers are built under it (ADR 0007). Must be https outside development. |
-| `IAM_DATABASE_URL` | `database_url` | string | - | no | PostgreSQL connection URL. Optional; without it the service starts without a database. Secret. |
-| `IAM_DATABASE_APP_ROLE` | `database_app_role` | string | `iam_app` | no | Database role the service uses at runtime (subject to row level security). |
+| `IAM_DATABASE_URL` | `database_url` | string | - | no | PostgreSQL connection URL. Optional; without it the service starts without a database. iam migrate requires it and connects as the migration role. Secret. |
+| `IAM_DATABASE_APP_ROLE` | `database_app_role` | string | `iam_app` | no | Database role the service uses at runtime (subject to row level security). iam migrate grants it DML and refuses a name not matching iam_[a-z0-9_]* or a role that is a superuser, bypasses RLS or owns schema objects. |
 | `IAM_SHUTDOWN_TIMEOUT` | `shutdown_timeout` | duration | `10s` | no | Grace period for in-flight requests on shutdown. |
 | `IAM_CURSOR_KEY` | `cursor_key` | string | - | no | Base64 key (at least 32 bytes) protecting pagination cursors. Required outside development, where it may be left empty. Secret. |
 | `IAM_ARGON2_MEMORY_KIB` | `argon2_memory_kib` | integer | `19456` | no | Argon2id memory cost in KiB. Below 19456 raises a critical alert. |
 | `IAM_ARGON2_ITERATIONS` | `argon2_iterations` | integer | `2` | no | Argon2id iteration count. Below 2 raises a critical alert. |
 | `IAM_ARGON2_PARALLELISM` | `argon2_parallelism` | integer | `1` | no | Argon2id degree of parallelism. |
 | `IAM_ARGON2_MAX_CONCURRENT` | `argon2_max_concurrent` | integer | `2` | no | Maximum password hashes computed at the same time (bounds memory use). |
+| `IAM_DATABASE_STATEMENT_TIMEOUT` | `database_statement_timeout` | duration | `5s` | no | Longest statement the service runs (Postgres statement_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_IDLE_IN_TRANSACTION_TIMEOUT` | `database_idle_in_transaction_timeout` | duration | `10s` | no | Longest a service transaction may sit idle (Postgres idle_in_transaction_session_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_LOCK_TIMEOUT` | `database_lock_timeout` | duration | `2s` | no | Longest a service statement waits for a lock (Postgres lock_timeout). Between 1ms and 1h. |
+| `IAM_DATABASE_MAX_CONN_IDLE_TIME` | `database_max_conn_idle_time` | duration | `1m` | no | An idle pooled connection is closed after this long, freeing it on the shared instance. Between 1ms and 1h. |
+| `IAM_MIGRATION_STATEMENT_TIMEOUT` | `migration_statement_timeout` | duration | `5m` | no | Longest statement of iam migrate. Between 1ms and 1h. |
+| `IAM_MIGRATION_LOCK_TIMEOUT` | `migration_lock_timeout` | duration | `30s` | no | Longest iam migrate waits for a lock, the migration lock included. Between 1ms and 1h. |

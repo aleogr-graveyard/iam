@@ -39,6 +39,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Argon2 != (Argon2Settings{MemoryKiB: 19456, Iterations: 2, Parallelism: 1, MaxConcurrent: 2}) {
 		t.Fatalf("argon2 defaults: %+v", cfg.Argon2)
 	}
+	if cfg.Database != (DatabaseLimits{
+		StatementTimeout: 5 * time.Second, IdleInTransactionTimeout: 10 * time.Second, LockTimeout: 2 * time.Second,
+		MaxConnIdleTime: time.Minute, MigrationStatementTimeout: 5 * time.Minute, MigrationLockTimeout: 30 * time.Second,
+	}) {
+		t.Fatalf("database defaults: %+v", cfg.Database)
+	}
 	if len(findings) != 0 {
 		t.Fatalf("findings: %+v", findings)
 	}
@@ -283,7 +289,7 @@ func FuzzLoad(f *testing.F) {
 
 func assertSafe(t *testing.T, cfg Config) {
 	t.Helper()
-	if cfg.ShutdownTimeout <= 0 || !cfg.Environment.known() {
+	if cfg.ShutdownTimeout <= 0 || !cfg.Environment.known() || cfg.Database.StatementTimeout < time.Millisecond {
 		t.Fatalf("accepted invalid config: %+v", cfg)
 	}
 	if cfg.Environment != Development && (!strings.HasPrefix(strings.ToLower(cfg.PublicBaseURL), "https://") || cfg.CursorKey == "") {
@@ -292,3 +298,19 @@ func assertSafe(t *testing.T, cfg Config) {
 }
 
 func reflectValue(c *Config) reflect.Value { return reflect.ValueOf(c).Elem() }
+
+func TestLoad_DatabaseLimitsAreBounded(t *testing.T) {
+	for _, name := range []string{
+		"IAM_DATABASE_STATEMENT_TIMEOUT", "IAM_DATABASE_IDLE_IN_TRANSACTION_TIMEOUT", "IAM_DATABASE_LOCK_TIMEOUT",
+		"IAM_DATABASE_MAX_CONN_IDLE_TIME", "IAM_MIGRATION_STATEMENT_TIMEOUT", "IAM_MIGRATION_LOCK_TIMEOUT",
+	} {
+		for _, v := range []string{"0s", "-1s", "500us", "2h"} {
+			if _, _, err := Load(env(prod(map[string]string{name: v})), noFile); err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s=%s: error %v, want it refused by name", name, v, err)
+			}
+		}
+		if _, _, err := Load(env(prod(map[string]string{name: "1ms"})), noFile); err != nil {
+			t.Errorf("%s=1ms: %v", name, err)
+		}
+	}
+}
